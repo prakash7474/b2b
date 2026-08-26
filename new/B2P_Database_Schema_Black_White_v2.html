@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>B2P — Database Schema</title>
+<style>
+  :root{
+    --navy:#000000;
+    --navy-soft:#1A1A1A;
+    --green:#000000;
+    --green-soft:#F2F2F2;
+    --green-line:#000000;
+    --slate-bg:#FFFFFF;
+    --card-bg:#FFFFFF;
+    --border:#BDBDBD;
+    --border-strong:#808080;
+    --text:#000000;
+    --text-mute:#555555;
+    --mono: Consolas, 'Liberation Mono', monospace;
+    --sans: Arial, Helvetica, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:#FFFFFF; font-family:var(--sans); color:var(--text);
+    display:flex; flex-direction:column; align-items:center; gap:40px; padding:40px 0 80px;
+  }
+  .artboard{
+    width:1600px; background:var(--slate-bg); border-radius:0;
+    box-shadow:none;
+    padding:44px 56px 52px; position:relative;
+  }
+  .kicker{
+    display:inline-flex; align-items:center; gap:8px;
+    background:var(--navy); color:#FFFFFF; font-size:11px; letter-spacing:1px;
+    text-transform:uppercase; padding:5px 12px; border-radius:0; font-weight:600;
+  }
+  .kicker.alt{ background:var(--green); color:#FFFFFF; }
+  h1{ font-size:30px; margin:14px 0 4px; letter-spacing:-0.5px; }
+  .strap{ color:var(--text-mute); font-size:14.5px; margin:0 0 26px; max-width:900px; }
+  .strap b{ color:var(--text); }
+
+  /* ---- core hub card ---- */
+  .hub-row{ display:flex; justify-content:center; margin-bottom:22px; }
+  .hub{
+    width:560px; background:var(--card-bg); border-radius:0; color:var(--text);
+    border:1px solid var(--border); box-shadow:none;
+    overflow:hidden;
+  }
+  .hub .head{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 18px; border-bottom:1px solid var(--border);
+    background:var(--navy-soft); color:#FFFFFF;
+  }
+  .hub .head .name{ font-family:var(--mono); font-weight:700; font-size:15px; letter-spacing:0.5px; }
+  .hub .head .tag{ background:var(--green); color:#FFFFFF; font-size:10px; font-weight:800;
+    padding:3px 8px; border-radius:0; letter-spacing:0.5px; }
+  .hub .fields{ padding:12px 18px 16px; columns:2; column-gap:24px; }
+  .hub .field{ font-family:var(--mono); font-size:11.5px; padding:3px 0; white-space:nowrap;
+    display:flex; justify-content:space-between; gap:10px; break-inside:avoid; }
+  .hub .field .fname{ color:var(--text); }
+  .hub .field .ftype{ color:var(--text-mute); }
+  .badge{ font-size:8.5px; font-weight:800; padding:1px 5px; border-radius:0; margin-left:5px; letter-spacing:0.3px; }
+  .badge.pk{ background:#E6E6E6; color:#000000; }
+  .badge.fk{ background:#E0E0E0; color:#000000; }
+  .badge.uniq{ background:#E0E0E0; color:#000000; }
+  .badge.new{ background:var(--green); color:#FFFFFF; }
+
+  /* ---- clusters (operational) ---- */
+  .clusters{ display:flex; gap:22px; align-items:flex-start; }
+  .cluster{ flex:1; min-width:0; }
+  .cluster-label{
+    font-size:10.5px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase;
+    color:#FFFFFF; padding:5px 10px; border-radius:0; margin-bottom:10px; display:inline-block;
+  }
+  .cl-identity{ background:#333333; }
+  .cl-production{ background:#333333; }
+  .cl-transaction{ background:#333333; }
+  .cl-ops{ background:#333333; }
+  .cl-history{ background:#333333; }
+  .cl-context{ background:#333333; }
+  .cl-feature{ background:#333333; }
+
+  .card{
+    background:var(--card-bg); border:1px solid var(--border); border-radius:0;
+    margin-bottom:10px; overflow:hidden;
+  }
+  .card .head{
+    background:var(--navy-soft); color:#FFFFFF; padding:7px 11px;
+    font-family:var(--mono); font-size:11.5px; font-weight:700; letter-spacing:0.3px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .card .head .newtag{ background:var(--green); color:#FFFFFF; font-size:8px; font-weight:800;
+    padding:2px 5px; border-radius:0; }
+  .card .fields{ padding:7px 11px 9px; }
+  .card .field{
+    font-family:var(--mono); font-size:10.5px; padding:2.5px 0; display:flex;
+    justify-content:space-between; gap:8px; color:var(--text);
+  }
+  .card .field .ftype{ color:var(--text-mute); flex-shrink:0; }
+
+  .legend{
+    margin-top:24px; display:flex; gap:18px; align-items:center; font-size:11px; color:var(--text-mute);
+    border-top:1px dashed var(--border-strong); padding-top:14px;
+  }
+  .legend span{ display:inline-flex; align-items:center; gap:5px; }
+
+  /* ---- analytical hub-and-spoke ---- */
+  .spoke-wrap{ position:relative; height:640px; }
+  svg.connectors{ position:absolute; top:0; left:0; width:100%; height:100%; z-index:0; }
+  .spoke-card{
+    position:absolute; width:330px; background:var(--card-bg); border:1px solid var(--border);
+    border-radius:0; overflow:hidden; box-shadow:none; z-index:1;
+  }
+  .spoke-card .head{
+    background:var(--navy-soft); color:#FFFFFF; padding:8px 12px; font-family:var(--mono);
+    font-size:12px; font-weight:700; display:flex; justify-content:space-between; align-items:center;
+  }
+  .spoke-card .head .newtag{ background:var(--green); color:#FFFFFF; font-size:8px; font-weight:800; padding:2px 5px; border-radius:0; }
+  .spoke-card .fields{ padding:9px 12px 11px; }
+  .spoke-card .field{ font-family:var(--mono); font-size:10.5px; padding:2.5px 0; display:flex; justify-content:space-between; gap:8px; }
+  .spoke-card .field .ftype{ color:var(--text-mute); }
+
+  .analytical-hub{
+    position:absolute; left:635px; top:230px; width:330px; z-index:1;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- ARTBOARD 1 — OPERATIONAL DATABASE (OLTP)                      -->
+<!-- ============================================================ -->
+<div class="artboard" id="operational">
+  <span class="kicker">B2P · Batter to Platter</span>
+  <h1>Operational Database <span style="color:var(--text-mute); font-weight:400;">— MongoDB Atlas (OLTP)</span></h1>
+  <p class="strap">Live transactional store powering the app in real time. The business logic centers on the
+    <b>batch sitting in a vendor's inventory</b> — not on the user record — because that's the object every
+    freshness check, order, and alert actually revolves around.</p>
+
+  <div class="hub-row">
+    <div class="hub">
+      <div class="head"><span class="name">INVENTORY</span><span class="tag">CORE ENTITY</span></div>
+      <div class="fields">
+        <div class="field"><span class="fname">_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span class="fname">vendorId <span class="badge fk">FK</span></span><span class="ftype">ObjectId</span></div>
+        <div class="field"><span class="fname">batchId <span class="badge fk">FK</span></span><span class="ftype">ObjectId</span></div>
+        <div class="field"><span class="fname">productId <span class="badge fk">FK</span></span><span class="ftype">ObjectId</span></div>
+        <div class="field"><span class="fname">quantity</span><span class="ftype">Number</span></div>
+        <div class="field"><span class="fname">price</span><span class="ftype">Number</span></div>
+        <div class="field"><span class="fname">receivedAt</span><span class="ftype">Date</span></div>
+        <div class="field"><span class="fname">expiryAt</span><span class="ftype">Date</span></div>
+        <div class="field"><span class="fname">freshnessScore</span><span class="ftype">0–100</span></div>
+        <div class="field"><span class="fname">minimumStock</span><span class="ftype">Number</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="clusters">
+    <div class="cluster">
+      <span class="cluster-label cl-identity">Identity &amp; Access</span>
+
+      <div class="card"><div class="head">USER</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>email</span><span class="ftype badge uniq">UNIQ</span></div>
+          <div class="field"><span>phone</span><span class="ftype">String</span></div>
+          <div class="field"><span>passwordHash</span><span class="ftype">String</span></div>
+          <div class="field"><span>role</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>isVerified</span><span class="ftype">Bool</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">MANUFACTURER</div>
+        <div class="fields">
+          <div class="field"><span>userId <span class="badge pk">PK</span><span class="badge fk">FK</span></span></div>
+          <div class="field"><span>businessName</span><span class="ftype">String</span></div>
+          <div class="field"><span>licenseNumber</span><span class="ftype badge uniq">UNIQ</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">VENDOR</div>
+        <div class="fields">
+          <div class="field"><span>userId <span class="badge pk">PK</span><span class="badge fk">FK</span></span></div>
+          <div class="field"><span>shopName / fssaiNumber</span><span class="ftype badge uniq">UNIQ</span></div>
+          <div class="field"><span>rating, ratingCount</span><span class="ftype">Number</span></div>
+          <div class="field"><span>location</span><span class="ftype">GeoJSON·2dsphere</span></div>
+          <div class="field"><span>hasRefrigerator <span class="badge new">NEW</span></span><span class="ftype">Bool</span></div>
+          <div class="field"><span>storageType <span class="badge new">NEW</span></span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>fridgeTemperatureC <span class="badge new">NEW</span></span><span class="ftype">Number</span></div>
+          <div class="field"><span>localityTier <span class="badge new">NEW</span></span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>hotspotDensityScore <span class="badge new">NEW</span></span><span class="ftype">Number</span></div>
+          <div class="field"><span>verificationStatus</span><span class="ftype">ENUM</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">CUSTOMER</div>
+        <div class="fields">
+          <div class="field"><span>userId <span class="badge pk">PK</span><span class="badge fk">FK</span></span></div>
+          <div class="field"><span>address</span><span class="ftype">String</span></div>
+          <div class="field"><span>defaultLocation</span><span class="ftype">GeoJSON</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cluster">
+      <span class="cluster-label cl-production">Production</span>
+
+      <div class="card"><div class="head">PRODUCT <span class="newtag">NEW</span></div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>name</span><span class="ftype badge uniq">UNIQ</span></div>
+          <div class="field"><span>category</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>unitType</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>shelfLifeHoursAmbient</span><span class="ftype">Number</span></div>
+          <div class="field"><span>shelfLifeHoursFridge</span><span class="ftype">Number</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">BATCH</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>manufacturerId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>productId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>batchNumber</span><span class="ftype badge uniq">UNIQ</span></div>
+          <div class="field"><span>mfgTimestamp</span><span class="ftype">Date</span></div>
+          <div class="field"><span>volume</span><span class="ftype">Number</span></div>
+          <div class="field"><span>initialPH</span><span class="ftype">Number</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cluster">
+      <span class="cluster-label cl-transaction">Transactions &amp; Fulfillment</span>
+
+      <div class="card"><div class="head">ORDER</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>customerId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>vendorId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>status / orderType</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>totalAmount</span><span class="ftype">Number</span></div>
+          <div class="field"><span>paymentStatus</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>orderDate</span><span class="ftype">Date</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">ORDER_ITEM</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>orderId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>inventoryId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>productId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>quantity / unitPrice</span><span class="ftype">Number</span></div>
+          <div class="field"><span>subtotal</span><span class="ftype">Number</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">FEEDBACK</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>orderId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>customerId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>rating (1–5)</span><span class="ftype">Number</span></div>
+          <div class="field"><span>comment</span><span class="ftype">String</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cluster">
+      <span class="cluster-label cl-ops">Engagement &amp; Ops</span>
+
+      <div class="card"><div class="head">ALERT</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>userId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>relatedOrderId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>relatedBatchId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>type</span><span class="ftype">ENUM</span></div>
+          <div class="field"><span>message / isRead</span><span class="ftype">String / Bool</span></div>
+        </div>
+      </div>
+
+      <div class="card"><div class="head">VENDOR_RECOMMENDATION</div>
+        <div class="fields">
+          <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+          <div class="field"><span>vendorId <span class="badge fk">FK</span></span></div>
+          <div class="field"><span>distanceKm</span><span class="ftype">Number</span></div>
+          <div class="field"><span>stockScore / freshnessScore</span><span class="ftype">Number</span></div>
+          <div class="field"><span>ratingScore</span><span class="ftype">Number</span></div>
+          <div class="field"><span>recommendationRank</span><span class="ftype">Number</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="badge pk">PK</span> primary key</span>
+    <span><span class="badge fk">FK</span> reference</span>
+    <span><span class="badge uniq">UNIQ</span> unique index</span>
+    <span><span class="badge new">NEW</span> added for the ML pipeline</span>
+    <span style="margin-left:auto;">Written by: Node.js / Express (Prakash B's backend module)</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ARTBOARD 2 — ANALYTICAL DATABASE (OLAP / ML)                  -->
+<!-- ============================================================ -->
+<div class="artboard" id="analytical">
+  <span class="kicker alt">B2P · Batter to Platter</span>
+  <h1>Analytical Database <span style="color:var(--text-mute); font-weight:400;">— MongoDB Atlas (ML Feature Store)</span></h1>
+  <p class="strap">Append-only historical store feeding the FastAPI ML service. Every table here exists to answer
+    one question — <b>what does the model need to know to make its next prediction</b> — so <b>Prediction</b> is
+    the hub, not a log of user activity.</p>
+
+  <div class="spoke-wrap">
+    <svg class="connectors" viewBox="0 0 1488 640" preserveAspectRatio="none">
+      <line x1="330" y1="120" x2="635" y2="290" stroke="#000000" stroke-width="2.5"/>
+      <line x1="330" y1="480" x2="635" y2="330" stroke="#000000" stroke-width="2.5"/>
+      <line x1="1158" y1="120" x2="965" y2="290" stroke="#000000" stroke-width="2.5"/>
+      <line x1="1158" y1="480" x2="965" y2="330" stroke="#000000" stroke-width="2.5"/>
+    </svg>
+
+    <!-- top-left -->
+    <div class="spoke-card" style="left:0; top:40px;">
+      <div class="head"><span>INVENTORY_MOVEMENT</span><span class="newtag">NEW</span></div>
+      <div class="fields">
+        <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span>vendorId / productId / batchId</span><span class="ftype">Refs</span></div>
+        <div class="field"><span>movementType</span><span class="ftype">ENUM</span></div>
+        <div class="field"><span>quantity (±)</span><span class="ftype">Number</span></div>
+        <div class="field"><span>occurredAt</span><span class="ftype">Date</span></div>
+        <div class="field"><span>relatedOrderId</span><span class="ftype">Ref, null</span></div>
+        <div class="field"><span>expiryAt</span><span class="ftype">Date, null</span></div>
+      </div>
+      <div style="padding:0 12px 10px; font-size:10px; color:var(--text-mute);">
+        The event ledger — reconstructs sell-through, stockouts &amp; lag features for any past window.
+      </div>
+    </div>
+
+    <!-- bottom-left -->
+    <div class="spoke-card" style="left:0; top:400px;">
+      <div class="head"><span>WEATHER_FORECAST</span><span class="newtag">NEW</span></div>
+      <div class="fields">
+        <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span>locationGridKey</span><span class="ftype">String</span></div>
+        <div class="field"><span>forecastIssuedAt</span><span class="ftype">Date</span></div>
+        <div class="field"><span>forecastFor</span><span class="ftype">Date</span></div>
+        <div class="field"><span>temperatureC</span><span class="ftype">Number</span></div>
+        <div class="field"><span>rainProbability</span><span class="ftype">0–1</span></div>
+      </div>
+      <div style="padding:0 12px 10px; font-size:10px; color:var(--text-mute);">
+        Snapshots the forecast <i>as issued</i> — never the actual weather, to avoid leakage.
+      </div>
+    </div>
+
+    <!-- top-right -->
+    <div class="spoke-card" style="left:1158px; top:40px;">
+      <div class="head"><span>FESTIVAL_CALENDAR</span><span class="newtag">NEW</span></div>
+      <div class="fields">
+        <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span>date</span><span class="ftype badge uniq">UNIQ</span></div>
+        <div class="field"><span>festivalType</span><span class="ftype">ENUM</span></div>
+        <div class="field"><span>festivalName</span><span class="ftype">String</span></div>
+        <div class="field"><span>region</span><span class="ftype">"Tamil Nadu"</span></div>
+      </div>
+      <div style="padding:0 12px 10px; font-size:10px; color:var(--text-mute);">
+        Static config — Pongal, Tamil New Year, Navaratri windows.
+      </div>
+    </div>
+
+    <!-- bottom-right -->
+    <div class="spoke-card" style="left:1158px; top:400px;">
+      <div class="head"><span>FEATURE_SNAPSHOT</span><span class="newtag">NEW</span></div>
+      <div class="fields">
+        <div class="field"><span>_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span>vendorId / productId</span><span class="ftype">Refs</span></div>
+        <div class="field"><span>windowStart / windowEnd</span><span class="ftype">Date</span></div>
+        <div class="field"><span>featureVector</span><span class="ftype">JSON</span></div>
+        <div class="field"><span>targetValue</span><span class="ftype">Number, null</span></div>
+        <div class="field"><span>datasetVersion</span><span class="ftype">String</span></div>
+      </div>
+      <div style="padding:0 12px 10px; font-size:10px; color:var(--text-mute);">
+        Materialized training rows — identical feature code for training &amp; serving.
+      </div>
+    </div>
+
+    <!-- hub -->
+    <div class="hub analytical-hub">
+      <div class="head"><span class="name">PREDICTION</span><span class="tag">CORE ENTITY</span></div>
+      <div class="fields" style="columns:1;">
+        <div class="field"><span class="fname">_id <span class="badge pk">PK</span></span></div>
+        <div class="field"><span class="fname">predictionType</span><span class="ftype">DEMAND / SPOILAGE_RISK</span></div>
+        <div class="field"><span class="fname">vendorId / productId / batchId</span><span class="ftype">Refs</span></div>
+        <div class="field"><span class="fname">windowStart / windowEnd</span><span class="ftype">Date, null</span></div>
+        <div class="field"><span class="fname">predictedValue</span><span class="ftype">Mixed</span></div>
+        <div class="field"><span class="fname">recommendedDispatch</span><span class="ftype">Number, null</span></div>
+        <div class="field"><span class="fname">modelVersion</span><span class="ftype">String</span></div>
+        <div class="field"><span class="fname">generatedAt</span><span class="ftype">Date</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend" style="margin-top:0;">
+    <span><span class="badge pk">PK</span> primary key</span>
+    <span><span class="badge uniq">UNIQ</span> unique index</span>
+    <span><span class="badge new">NEW</span> analytical-only, absent from OLTP store</span>
+    <span style="margin-left:auto;">Read/written by: FastAPI ML service (Selvavignesh S's pipeline)</span>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battery Risk Predictor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 48px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #fff;
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 16px 20px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 18px;
+            font-weight: 500;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .input-wrapper input::placeholder {
+            color: rgba(255, 255, 255, 0.25);
+        }
+
+        .input-wrapper input:focus {
+            border-color: #7c5cfc;
+            box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.2);
+        }
+
+        .input-unit {
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: rgba(255, 255, 255, 0.35);
+            font-size: 14px;
+            font-weight: 500;
+            pointer-events: none;
+        }
+
+        .slider-track {
+            width: 100%;
+            margin-top: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .slider-label {
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 11px;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            outline: none;
+            margin-top: 8px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #7c5cfc;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(124, 92, 252, 0.5);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #7c5cfc, #a855f7);
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 12px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(124, 92, 252, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            margin-top: 32px;
+            padding: 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+
+        .result.show {
+            display: block;
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .risk-badge {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .risk-low {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .risk-medium {
+            background: rgba(234, 179, 8, 0.15);
+            color: #eab308;
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .risk-high {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .confidence-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bar-label {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 12px;
+            width: 100px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .bar-track {
+            flex: 1;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.8s ease;
+            width: 0%;
+        }
+
+        .bar-fill.low { background: #22c55e; }
+        .bar-fill.medium { background: #eab308; }
+        .bar-fill.high { background: #ef4444; }
+
+        .bar-value {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+            font-weight: 500;
+            width: 50px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .error {
+            margin-top: 16px;
+            padding: 14px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 10px;
+            color: #ef4444;
+            font-size: 14px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .status-bar {
+            margin-top: 24px;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            flex-shrink: 0;
+        }
+
+        .status-dot.offline {
+            background: #ef4444;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Battery Risk Predictor</h1>
+            <p>ML-powered spoilage risk assessment</p>
+        </div>
+
+        <form id="predictForm" onsubmit="return false;">
+            <div class="form-group">
+                <label>Hours Since Manufacturing</label>
+                <div class="input-wrapper">
+                    <input type="number" id="hours" placeholder="e.g. 12" step="0.1" min="0" max="200" required>
+                    <span class="input-unit">hrs</span>
+                </div>
+                <input type="range" id="hoursSlider" min="0" max="72" value="12" oninput="syncSlider('hours', 'hoursSlider')">
+                <div class="slider-track">
+                    <span class="slider-label">0h</span>
+                    <span class="slider-label">72h</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Storage Temperature</label>
+                <div class="input-wrapper">
+                    <input type="number" id="temperature" placeholder="e.g. 27" step="0.1" min="-40" max="60" required>
+                    <span class="input-unit">°C</span>
+                </div>
+                <input type="range" id="tempSlider" min="0" max="60" value="27" oninput="syncSlider('temperature', 'tempSlider')">
+                <div class="slider-track">
+                    <span class="slider-label">0°C</span>
+                    <span class="slider-label">60°C</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Sell-Through Rate</label>
+                <div class="input-wrapper">
+                    <input type="number" id="sellRate" placeholder="e.g. 0.5" step="0.01" min="0" max="1" required>
+                    <span class="input-unit">0-1</span>
+                </div>
+                <input type="range" id="sellSlider" min="0" max="100" value="50" oninput="syncSellSlider()">
+                <div class="slider-track">
+                    <span class="slider-label">0%</span>
+                    <span class="slider-label">100%</span>
+                </div>
+            </div>
+
+            <button type="submit" class="btn" id="predictBtn" onclick="predict()">
+                Run Prediction
+            </button>
+        </form>
+
+        <div id="errorBox" class="error"></div>
+
+        <div id="resultBox" class="result">
+            <div class="result-header">
+                <span style="color: rgba(255,255,255,0.5); font-size: 13px;">Result:</span>
+                <span id="riskBadge" class="risk-badge"></span>
+            </div>
+            <div class="confidence-bars">
+                <div class="bar-row">
+                    <span class="bar-label">Low Risk</span>
+                    <div class="bar-track">
+                        <div id="barLow" class="bar-fill low"></div>
+                    </div>
+                    <span id="valLow" class="bar-value">0%</span>
+                </div>
+                <div class="bar-row">
+                    <span class="bar-label">Medium Risk</span>
+                    <div class="bar-track">
+                        <div id="barMed" class="bar-fill medium"></div>
+                    </div>
+                    <span id="valMed" class="bar-value">0%</span>
+                </div>
+                <div class="bar-row">
+                    <span class="bar-label">High Risk</span>
+                    <div class="bar-track">
+                        <div id="barHigh" class="bar-fill high"></div>
+                    </div>
+                    <span id="valHigh" class="bar-value">0%</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <div id="statusDot" class="status-dot"></div>
+            <span id="statusText">Checking API...</span>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '';
+
+        // Sync number input with slider
+        function syncSlider(inputId, sliderId) {
+            document.getElementById(inputId).value = document.getElementById(sliderId).value;
+        }
+
+        function syncSellSlider() {
+            const slider = document.getElementById('sellSlider');
+            document.getElementById('sellRate').value = (slider.value / 100).toFixed(2);
+        }
+
+        // Sync number input back to slider
+        document.getElementById('hours').addEventListener('input', function() {
+            document.getElementById('hoursSlider').value = Math.min(this.value, 72);
+        });
+        document.getElementById('temperature').addEventListener('input', function() {
+            document.getElementById('tempSlider').value = Math.min(Math.max(this.value, 0), 60);
+        });
+        document.getElementById('sellRate').addEventListener('input', function() {
+            document.getElementById('sellSlider').value = Math.round(this.value * 100);
+        });
+
+        // Check API health on load
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API_URL}/health`);
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    document.getElementById('statusDot').className = 'status-dot';
+                    document.getElementById('statusText').textContent =
+                        `API online | MongoDB: ${data.mongodb} | Model: ${data.model}`;
+                } else {
+                    throw new Error('Not ok');
+                }
+            } catch {
+                document.getElementById('statusDot').className = 'status-dot offline';
+                document.getElementById('statusText').textContent = 'API offline - start uvicorn app:app';
+            }
+        }
+        checkHealth();
+
+        // Run prediction
+        async function predict() {
+            const btn = document.getElementById('predictBtn');
+            const errorBox = document.getElementById('errorBox');
+            const resultBox = document.getElementById('resultBox');
+
+            const hours = parseFloat(document.getElementById('hours').value);
+            const temperature = parseFloat(document.getElementById('temperature').value);
+            const sellRate = parseFloat(document.getElementById('sellRate').value);
+
+            // Validate inputs
+            if (isNaN(hours) || isNaN(temperature) || isNaN(sellRate)) {
+                errorBox.textContent = 'Please fill in all fields with valid numbers.';
+                errorBox.className = 'error show';
+                return;
+            }
+
+            if (sellRate < 0 || sellRate > 1) {
+                errorBox.textContent = 'Sell-through rate must be between 0 and 1.';
+                errorBox.className = 'error show';
+                return;
+            }
+
+            errorBox.className = 'error';
+            resultBox.className = 'result';
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Predicting...';
+
+            try {
+                const res = await fetch(`${API_URL}/predict`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        hours_since_mfg: hours,
+                        storage_temp_c: temperature,
+                        sell_through_rate: sellRate
+                    })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Prediction failed');
+                }
+
+                // Show result
+                const pred = data.prediction;
+                const badge = document.getElementById('riskBadge');
+                badge.textContent = pred;
+                badge.className = 'risk-badge ' + (pred === 'Low Risk' ? 'risk-low' : pred === 'Medium Risk' ? 'risk-medium' : 'risk-high');
+
+                // Animate confidence bars
+                const conf = data.confidence;
+                setTimeout(() => {
+                    document.getElementById('barLow').style.width = (conf['Low Risk'] * 100) + '%';
+                    document.getElementById('barMed').style.width = (conf['Medium Risk'] * 100) + '%';
+                    document.getElementById('barHigh').style.width = (conf['High Risk'] * 100) + '%';
+                }, 50);
+
+                document.getElementById('valLow').textContent = (conf['Low Risk'] * 100).toFixed(1) + '%';
+                document.getElementById('valMed').textContent = (conf['Medium Risk'] * 100).toFixed(1) + '%';
+                document.getElementById('valHigh').textContent = (conf['High Risk'] * 100).toFixed(1) + '%';
+
+                resultBox.className = 'result show';
+
+            } catch (err) {
+                errorBox.textContent = err.message;
+                errorBox.className = 'error show';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Run Prediction';
+            }
+        }
+
+        // Enter key triggers prediction
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') predict();
+        });
+    </script>
+</body>
+</html>
