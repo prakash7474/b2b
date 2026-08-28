@@ -726,9 +726,12 @@ scikit-learn>=1.3
 ### Step 2: Set Environment Variables
 
 ```bash
-# Optional — defaults to hardcoded connection string
+# Recommend: export MONGODB_URI, or your atlas-credentials.env will be used.
 export MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net"
 ```
+
+- If `MONGODB_URI` is unset, the app loads `atlas-credentials.env` (gitignored).
+- If neither exists, it falls back to `mongodb://localhost:27017` (local MongoDB).
 
 ### Step 3: Verify ML Model Files
 
@@ -824,15 +827,146 @@ def safe_encode(encoder, value, known_labels):
 
 ### MongoDB Atlas Connection
 
-Default connection string (hardcoded in both apps):
-```
-mongodb+srv://rioprakash47_db_user:q7ngEz0PZF3L9szJ@cluster0.ziuzjl5.mongodb.net
+Credentials are **not** hardcoded in the source. `app.py` loads them from the environment first, then from the gitignored `atlas-credentials.env` file (via `_load_env_file()`), and only falls back to a non-secret local URI:
+
+```python
+def _load_env_file(path="atlas-credentials.env"):  # reads KEY=VALUE lines
+    ...
+
+_load_env_file()
+MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 ```
 
-Override with environment variable:
+Set `MONGODB_URI` explicitly (or fill in `atlas-credentials.env`):
+
 ```bash
-export MONGODB_URI="mongodb+srv://your-connection-string"
+export MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net"
 ```
+
+> `atlas-credentials.env` is listed in `.gitignore` and must never be committed.
+
+---
+
+## 12. Database Performance & MongoDB Optimization
+
+> The application runs against a single MongoDB database (`b2p`). This section documents the optimizations applied in `app.py` to reduce round-trips, cut server-side work, and keep list/aggregate endpoints responsive as data grows.
+
+### 12.1 Index Strategy
+
+On startup, `ensure_indexes()` (defined in `app.py`) creates indexes for every commonly-queried field. This lets MongoDB answer filters/sorts without collection scans.
+
+| Collection | Index (field → direction) | Serves |
+|------------|---------------------------|--------|
+| `vendors` | `vendor_id` | Vendor lookup / login |
+| `batches` | `batch_id` | Single-batch lookup, assign/receive |
+| `batches` | `vendor_id, status, created_at (desc)` | Batches list + status filter + sort |
+| `inventory` | `inventory_id` | Inventory item lookup |
+| `inventory` | `vendor_id` | Vendor inventory, stock aggregation |
+| `inventory` | `batch_number` | Spoilage-risk lookup for a batch |
+| `inventory` | `freshness_score` | High-risk dashboard count |
+| `orders` | `order_id` | Order lookup |
+| `orders` | `vendor_id, order_date (desc)` | Sales-history query for demand features |
+| `order_items` | `order_id` | Line items per order |
+| `order_items` | `inventory_id` | Resolve line item → product for per-product sales |
+| `predictions` | `predictionType` | Demand vs spoilage counts |
+| `predictions` | `generatedAt (desc)` | Prediction history (top-N) |
+| `predictions` | `vendorId` / `batchId` | Per-vendor / per-batch history |
+
+**Notes:**
+- Index creation is wrapped in `try/except` per index, so a missing field or a build error never blocks startup — a `[WARN]` is logged and the app continues.
+- Indexes are created once at startup. Existing data is indexed in place; new documents are indexed as they are inserted.
+- Add indexes to *new* collections you introduce (e.g. `alerts`, `recommendations`) the same way you query them.
+
+Verify with the Mongo shell / Atlas UI:
+
+```js
+db.batches.getIndexes()
+```
+
+### 12.2 Aggregate-on-Server (avoid loading all docs into Python)
+
+The dashboard previously pulled **every** inventory document into the app process to sum quantities (`sum(d["quantity"] for d in inventory.find())`). It now uses a `$group` aggregation so the sum happens inside MongoDB:
+
+```python
+stock_agg = list(inventory.aggregate(
+    [{"$group": {"_id": None, "qty": {"$sum": "$quantity"}}}]
+))
+total_stock = stock_agg[0]["qty"] if stock_agg else 0
+```
+
+**Why it matters:** only the single aggregate result crosses the network, instead of N documents. This is the pattern to use for any server-side `SUM`, `COUNT`, `AVG`, or `MIN/MAX` (e.g. revenue, average quantity, per-vendor sums).
+
+### 12.3 Elimination of N+1 Queries
+
+Three list endpoints previously performed 1 query per row in a loop (N+1 problem):
+
+| Endpoint | Before (N+1) | After |
+|----------|--------------|-------|
+| `GET /api/vendors` | 2 × `count_documents` per vendor | One `$group` aggregation returning `batch_count` + `received_count` for all vendors |
+| `GET /api/batches` | 1 × `vendors.find_one` per batch | One `vendors.find({"vendor_id": {"$in": [...]}})` build into a lookup map |
+| `GET /api/inventory` | 1 × `vendors.find_one` per item | One `$in` query resolved into a lookup map |
+
+**Result:** each endpoint issues a constant number of queries (`O(1)`) instead of `O(N)`, so request time no longer grows linearly with the number of rows.
+
+**Pattern to reuse** — batch a correlated lookup into one query:
+
+```python
+vendor_ids = {d.get("vendor_id") for d in docs if d.get("vendor_id")}
+vendor_names = {
+    v["vendor_id"]: v.get("shop_name", "")
+    for v in COLS["vendors"].find(
+        {"vendor_id": {"$in": list(vendor_ids)}},
+        {"vendor_id": 1, "shop_name": 1},
+    )
+}
+```
+
+### 12.4 Per-Product Demand Features
+
+Demand features (`lag1`, `lag7`, rolling means, same-slot mean) are computed from the vendor's **order history**. To avoid attributing a vendor's *other* products' sales to the product being forecast, `compute_sales_features()` resolves each `order_items` line to a product via `inventory_id → inventory.product_name` and counts units only for the target product:
+
+```python
+inv_by_id = {i["inventory_id"]: i.get("product_name") for i in inventory.find({"vendor_id": vendor_id})}
+...
+for item in vendor_items:
+    if inv_by_id.get(item.get("inventory_id")) != product_name:
+        continue
+    order_units[item["order_id"]] = order_units.get(item["order_id"], 0) + item.get("quantity", 0)
+```
+
+This removes redundant cross-product aggregation and keeps the feature vector aligned with what the model was trained on.
+
+### 12.5 Runtime / Serving Improvements
+
+The dev server now runs **threaded** and does not reload on every request by default (debug is opt-in):
+
+```python
+print("\n  B2P Platform starting on http://localhost:5000\n")
+debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+app.run(host="0.0.0.0", port=5000, debug=debug, threaded=not debug, use_reloader=debug)
+```
+
+- `threaded=True` lets the built-in server handle concurrent requests instead of serialising them.
+- `use_reloader` is off unless `FLASK_DEBUG=1`, avoiding the extra fork overhead.
+
+**Production:** the single-process Werkzeug server is intended for development (and can become a bottleneck). For production, run behind a real WSGI server:
+
+```bash
+gunicorn -w 4 -b 0.0.0.0:5000 --threads 2 app:app
+```
+
+- `-w` = number of worker processes (MPUs).
+- `--threads` = threads per worker for I/O-bound work (MongoDB calls, ML inference).
+
+### 12.6 Verification
+
+Confirm indexes are applied and queries are using them:
+
+```bash
+python -c "import app; print([i['name'] for i in app.COLS['batches'].list_indexes()])"
+```
+
+You can also enable MongoDB slow-query profiling in Atlas (`Profile > Profile Level: 1`) and check the **Performance Advisor** for any remaining un-indexed operations.
 
 ---
 
