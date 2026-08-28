@@ -16,20 +16,39 @@ import joblib
 import pandas as pd
 import numpy as np
 
+# ── Secret loading (from env / gitignored atlas-credentials.env) ─────
+def _load_env_file(path="atlas-credentials.env"):
+    """Load a simple KEY=VALUE file into the environment without extra deps."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            val = val.strip().strip('"').strip("'")
+            os.environ.setdefault(key.strip(), val)
+
+
+_load_env_file()
+
 # ── Flask setup ──────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
-app.secret_key = os.environ.get("SECRET_KEY", "b2p-secret-key-change-in-production")
-CORS(app)
+app.secret_key = os.environ.get("SECRET_KEY", "b2p-secret-key-rotate-in-production")
 
-# ── Admin credentials ───────────────────────────────────────────────
-ADMIN_USER = "admin"
-ADMIN_PASS = "admin123"
+# Restrict CORS to explicit origins (scoped) instead of allowing all origins.
+CORS_ORIGINS = [o.strip() for o in os.environ.get(
+    "CORS_ORIGINS", "http://localhost:5000,http://127.0.0.1:5000"
+).split(",") if o.strip()]
+CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
+
+# ── Admin credentials (read from environment) ───────────────────────
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 
 # ── MongoDB connection ──────────────────────────────────────────────
-MONGODB_URI = os.environ.get(
-    "MONGODB_URI",
-    "mongodb+srv://rioprakash47_db_user:q7ngEz0PZF3L9szJ@cluster0.ziuzjl5.mongodb.net"
-)
+MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
 db = client["b2p"]
 
@@ -43,6 +62,45 @@ COLS = {
     "order_items": db["order_items"],
     "predictions": db["predictions"],
 }
+
+# ── Database indexes (created at startup to speed up common queries) ─
+def ensure_indexes():
+    spec = {
+        "vendors": [[("vendor_id", 1)]],
+        "batches": [
+            [("batch_id", 1)],
+            [("vendor_id", 1), ("status", 1), ("created_at", -1)],
+        ],
+        "inventory": [
+            [("inventory_id", 1)],
+            [("vendor_id", 1)],
+            [("batch_number", 1)],
+            [("freshness_score", 1)],
+        ],
+        "orders": [
+            [("order_id", 1)],
+            [("vendor_id", 1), ("order_date", -1)],
+        ],
+        "order_items": [
+            [("order_id", 1)],
+            [("inventory_id", 1)],
+        ],
+        "predictions": [
+            [("predictionType", 1)],
+            [("generatedAt", -1)],
+            [("vendorId", 1)],
+            [("batchId", 1)],
+        ],
+    }
+    for coll, indexes in spec.items():
+        for keys in indexes:
+            try:
+                COLS[coll].create_index(keys)
+            except Exception as e:
+                print(f"  [WARN] Could not index {coll} {keys}: {e}")
+
+
+ensure_indexes()
 
 # ── Load ML models ─────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -68,6 +126,15 @@ KNOWN_LOCALITIES = list(locality_encoder.classes_)
 KNOWN_FESTIVALS = list(festival_encoder.classes_)
 KNOWN_PRODUCTS = list(product_encoder.classes_)
 KNOWN_STORAGE = list(storage_encoder.classes_)
+
+# Maps human-friendly product names (frontend labels) to the encoded IDs
+# the demand model was trained on (productId column in the CSV).
+PRODUCT_NAME_TO_ID = {
+    "Idli Batter": "Idly_Batter",
+    "Dosa Batter": "Dosa_Batter",
+    "Combo Pack": "Combo_Pack",
+    "Rava Batter": "Dosa_Batter",
+}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -126,26 +193,34 @@ def compute_sales_features(vendor_id, product_name, target_date, window):
     vendor_rating = vendor.get("rating", 4.0) if vendor else 4.0
     
     # ── Get product ID for encoding ──
-    product_map = {"Idli Batter": "Idly_Batter", "Dosa Batter": "Dosa_Batter",
-                   "Combo Pack": "Combo_Pack", "Rava Batter": "Dosa_Batter"}
-    product_id = product_map.get(product_name, "Idly_Batter")
+    product_id = PRODUCT_NAME_TO_ID.get(product_name, product_name)
     
     # ── Sales History: query ORDER_ITEMS + ORDERS for this vendor ──
     vendor_orders = list(COLS["orders"].find(
         {"vendor_id": vendor_id},
-        {"order_id": 1, "order_date": 1, "total_amount": 1}
+        {"order_id": 1, "order_date": 1}
     ).sort("order_date", -1).limit(100))
-    
-    # Get order items to compute actual units sold
+
+    # Get order items to compute actual units sold for the TARGET product.
+    # order_items links to inventory via inventory_id; inventory carries
+    # product_name, so we resolve each line item to a product and only count
+    # units that belong to the requested product (not all products).
     order_ids = [o["order_id"] for o in vendor_orders]
+    inv_by_id = {
+        i["inventory_id"]: i.get("product_name")
+        for i in COLS["inventory"].find({"vendor_id": vendor_id})
+        if i.get("inventory_id")
+    }
     vendor_items = list(COLS["order_items"].find(
         {"order_id": {"$in": order_ids}} if order_ids else {},
-        {"order_id": 1, "quantity": 1}
+        {"order_id": 1, "inventory_id": 1, "quantity": 1}
     ))
-    
-    # Map order_id → total units sold
+
+    # Map order_id → total units sold (scoped to the target product)
     order_units = {}
     for item in vendor_items:
+        if inv_by_id.get(item.get("inventory_id")) != product_name:
+            continue
         oid = item["order_id"]
         order_units[oid] = order_units.get(oid, 0) + item.get("quantity", 0)
     
@@ -225,9 +300,26 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user" not in session:
-            return redirect(url_for("login_page"))
+            return jsonify({"error": "Authentication required"}), 401
         return f(*args, **kwargs)
     return decorated
+
+
+# /api/login (creates the session) and /api/me (login-state probe) stay public.
+PUBLIC_API_ENDPOINTS = {"/api/login", "/api/me", "/api/logout"}
+
+
+@app.before_request
+def _require_api_auth():
+    """Enforce login on every /api/* endpoint except the allowlist."""
+    if not request.path.startswith("/api/"):
+        return
+    if request.method == "OPTIONS":  # CORS preflight
+        return
+    if request.path in PUBLIC_API_ENDPOINTS:
+        return
+    if "user" not in session:
+        return jsonify({"error": "Authentication required"}), 401
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -293,7 +385,11 @@ def dashboard():
     assigned_batches = batches.count_documents({"status": "assigned"})
     received_batches = batches.count_documents({"status": "received"})
     total_inventory = inventory.count_documents({})
-    total_stock = sum(d.get("quantity", 0) for d in inventory.find({}, {"quantity": 1}))
+    # Aggregate total stock on the server instead of pulling every doc.
+    stock_agg = list(inventory.aggregate(
+        [{"$group": {"_id": None, "qty": {"$sum": "$quantity"}}}]
+    ))
+    total_stock = stock_agg[0]["qty"] if stock_agg else 0
     low_stock = inventory.count_documents({"$expr": {"$lte": ["$quantity", "$minimum_stock"]}})
     high_freshness_risk = inventory.count_documents({"freshness_score": {"$gt": 0.7}})
     total_orders = orders.count_documents({})
@@ -321,11 +417,22 @@ def dashboard():
 @app.route("/api/vendors", methods=["GET"])
 def get_vendors():
     docs = list(COLS["vendors"].find({}))
+    # Aggregate batch counts for every vendor in a single pass (avoids N+1).
+    counts = {}
+    for c in COLS["batches"].aggregate([
+        {"$group": {
+            "_id": "$vendor_id",
+            "batch_count": {"$sum": 1},
+            "received_count": {"$sum": {"$cond": [{"$eq": ["$status", "received"]}, 1, 0]}},
+        }}
+    ]):
+        counts[c["_id"]] = c
     result = []
     for d in docs:
         item = jsonify_doc(d)
-        item["batch_count"] = COLS["batches"].count_documents({"vendor_id": d.get("vendor_id")})
-        item["received_count"] = COLS["batches"].count_documents({"vendor_id": d.get("vendor_id"), "status": "received"})
+        c = counts.get(d.get("vendor_id"), {})
+        item["batch_count"] = c.get("batch_count", 0)
+        item["received_count"] = c.get("received_count", 0)
         result.append(item)
     return jsonify(result)
 
@@ -404,13 +511,19 @@ def get_batches():
     if status:
         query["status"] = status
     docs = list(COLS["batches"].find(query).sort("created_at", DESCENDING))
+    # Resolve vendor shop names in one query (avoids N+1).
+    vendor_ids = {d.get("vendor_id") for d in docs if d.get("vendor_id")}
+    vendor_names = {}
+    if vendor_ids:
+        for v in COLS["vendors"].find(
+            {"vendor_id": {"$in": list(vendor_ids)}},
+            {"vendor_id": 1, "shop_name": 1},
+        ):
+            vendor_names[v["vendor_id"]] = v.get("shop_name", "")
     result = []
     for d in docs:
         item = jsonify_doc(d)
-        # Attach vendor info
-        v = COLS["vendors"].find_one({"vendor_id": d.get("vendor_id")})
-        if v:
-            item["vendor_name"] = v.get("shop_name", "")
+        item["vendor_name"] = vendor_names.get(d.get("vendor_id"), "")
         result.append(item)
     return jsonify(result)
 
@@ -558,12 +671,19 @@ def delete_batch(batch_id):
 @app.route("/api/inventory", methods=["GET"])
 def get_inventory():
     docs = list(COLS["inventory"].find({}))
+    # Resolve vendor shop names in one query (avoids N+1).
+    vendor_ids = {d.get("vendor_id") for d in docs if d.get("vendor_id")}
+    vendor_names = {}
+    if vendor_ids:
+        for v in COLS["vendors"].find(
+            {"vendor_id": {"$in": list(vendor_ids)}},
+            {"vendor_id": 1, "shop_name": 1},
+        ):
+            vendor_names[v["vendor_id"]] = v.get("shop_name", "")
     result = []
     for d in docs:
         item = jsonify_doc(d)
-        v = COLS["vendors"].find_one({"vendor_id": d.get("vendor_id")})
-        if v:
-            item["vendor_name"] = v.get("shop_name", "")
+        item["vendor_name"] = vendor_names.get(d.get("vendor_id"), "")
         result.append(item)
     return jsonify(result)
 
@@ -649,6 +769,7 @@ def predict_demand():
         data = request.json
         vendor_id = data.get("vendor_id", "V100")
         product_id = data.get("product_id", "Idly_Batter")
+        product_id = PRODUCT_NAME_TO_ID.get(product_id, product_id)
         date_str = data.get("date", "2026-03-01")
         target_date = datetime.strptime(date_str, "%Y-%m-%d")
         window = data.get("window", "morning")
@@ -904,101 +1025,6 @@ def get_stats():
     })
 
 
-# ════════════════════════════════════════════════════════════════════
-# SEED DATA
-# ════════════════════════════════════════════════════════════════════
-def seed_data():
-    now = datetime.utcnow()
-
-    if COLS["vendors"].count_documents({}) == 0:
-        vendors = [
-            {"vendor_id": "V100", "shop_name": "Lakshmi Idli Shop", "owner_name": "Lakshmi Devi",
-             "phone": "9876543210", "address": "12 Main Road, T Nagar, Chennai",
-             "localityTier": "residential_budget", "hotspotDensityScore": 33,
-             "hasRefrigerator": True, "storageType": "fridge", "fridgeTemperatureC": 4.9, "rating": 4.5,
-             "createdAt": now},
-            {"vendor_id": "V101", "shop_name": "Karthik Dosa Center", "owner_name": "Karthik Raj",
-             "phone": "9876543211", "address": "45 Anna Salai, Nungambakkam, Chennai",
-             "localityTier": "commercial", "hotspotDensityScore": 52,
-             "hasRefrigerator": False, "storageType": "backroom", "fridgeTemperatureC": -1, "rating": 3.8,
-             "createdAt": now},
-            {"vendor_id": "V102", "shop_name": "Fresh Batter Corner", "owner_name": "Priya Sharma",
-             "phone": "9876543212", "address": "78 Velachery Main Road, Chennai",
-             "localityTier": "residential_premium", "hotspotDensityScore": 41,
-             "hasRefrigerator": False, "storageType": "backroom", "fridgeTemperatureC": -1, "rating": 4.2,
-             "createdAt": now},
-            {"vendor_id": "V103", "shop_name": "Campus Canteen", "owner_name": "Ravi Kumar",
-             "phone": "9876543213", "address": "IIT Madras Campus, Adyar, Chennai",
-             "localityTier": "institutional", "hotspotDensityScore": 60,
-             "hasRefrigerator": True, "storageType": "counter", "fridgeTemperatureC": 6.3, "rating": 4.6,
-             "createdAt": now},
-            {"vendor_id": "V104", "shop_name": "RK Batter House", "owner_name": "Rajesh Kumar",
-             "phone": "9876543214", "address": "23 OMR Road, Sholinganallur, Chennai",
-             "localityTier": "residential_budget", "hotspotDensityScore": 25,
-             "hasRefrigerator": False, "storageType": "counter", "fridgeTemperatureC": -1, "rating": 3.5,
-             "createdAt": now},
-        ]
-        COLS["vendors"].insert_many(vendors)
-        print("  [OK] Seeded 5 vendors")
-
-    if COLS["products"].count_documents({}) == 0:
-        products = [
-            {"product_id": "P001", "product_name": "Idli Batter", "category": "batter", "unit_type": "kg",
-             "shelf_life_ambient_hrs": 24, "shelf_life_fridge_hrs": 72},
-            {"product_id": "P002", "product_name": "Dosa Batter", "category": "batter", "unit_type": "kg",
-             "shelf_life_ambient_hrs": 20, "shelf_life_fridge_hrs": 60},
-            {"product_id": "P003", "product_name": "Combo Pack", "category": "combo", "unit_type": "kg",
-             "shelf_life_ambient_hrs": 18, "shelf_life_fridge_hrs": 54},
-            {"product_id": "P004", "product_name": "Rava Batter", "category": "batter", "unit_type": "kg",
-             "shelf_life_ambient_hrs": 16, "shelf_life_fridge_hrs": 48},
-        ]
-        COLS["products"].insert_many(products)
-        print("  [OK] Seeded 4 products")
-
-    if COLS["batches"].count_documents({}) == 0:
-        batches = [
-            {"batch_id": "B20000", "product_name": "Idli Batter", "manufacturer": "B2P Central Kitchen",
-             "batch_number": "B20000", "mfg_timestamp": now - timedelta(hours=12),
-             "volume_kg": 5.0, "initialPH": 4.4, "temperatureC": 28.0, "humidityPct": 55.0,
-             "fermentationHours": 8.0, "vendor_id": "V100", "status": "received",
-             "assigned_at": now - timedelta(hours=10), "received_at": now - timedelta(hours=8),
-             "received_notes": "Good quality, delivered on time", "created_at": now - timedelta(hours=12)},
-            {"batch_id": "B20001", "product_name": "Dosa Batter", "manufacturer": "B2P Central Kitchen",
-             "batch_number": "B20001", "mfg_timestamp": now - timedelta(hours=6),
-             "volume_kg": 3.0, "initialPH": 4.47, "temperatureC": 30.0, "humidityPct": 60.0,
-             "fermentationHours": 7.5, "vendor_id": "V101", "status": "assigned",
-             "assigned_at": now - timedelta(hours=4), "received_at": None,
-             "received_notes": "", "created_at": now - timedelta(hours=6)},
-            {"batch_id": "B20002", "product_name": "Combo Pack", "manufacturer": "B2P Central Kitchen",
-             "batch_number": "B20002", "mfg_timestamp": now - timedelta(hours=2),
-             "volume_kg": 4.0, "initialPH": 4.52, "temperatureC": 27.0, "humidityPct": 50.0,
-             "fermentationHours": 9.0, "vendor_id": "", "status": "created",
-             "assigned_at": None, "received_at": None,
-             "received_notes": "", "created_at": now - timedelta(hours=2)},
-            {"batch_id": "B20003", "product_name": "Idli Batter", "manufacturer": "B2P Central Kitchen",
-             "batch_number": "B20003", "mfg_timestamp": now - timedelta(hours=1),
-             "volume_kg": 6.0, "initialPH": 4.46, "temperatureC": 29.0, "humidityPct": 52.0,
-             "fermentationHours": 8.5, "vendor_id": "V103", "status": "assigned",
-             "assigned_at": now - timedelta(minutes=30), "received_at": None,
-             "received_notes": "", "created_at": now - timedelta(hours=1)},
-        ]
-        COLS["batches"].insert_many(batches)
-        print("  [OK] Seeded 4 batches")
-
-    if COLS["inventory"].count_documents({}) == 0:
-        inventory = [
-            {"inventory_id": "INV001", "vendor_id": "V100", "product_name": "Idli Batter",
-             "batch_number": "B20000", "quantity": 25, "minimum_stock": 10, "price": 120.0,
-             "manufacture_date": now - timedelta(hours=12), "expiry_date": now + timedelta(hours=12),
-             "freshness_score": 0.5, "received_at": now - timedelta(hours=8)},
-            {"inventory_id": "INV002", "vendor_id": "V100", "product_name": "Dosa Batter",
-             "batch_number": "B002", "quantity": 15, "minimum_stock": 10, "price": 140.0,
-             "manufacture_date": now - timedelta(hours=20), "expiry_date": now + timedelta(hours=4),
-             "freshness_score": 0.8, "received_at": now - timedelta(hours=18)},
-        ]
-        COLS["inventory"].insert_many(inventory)
-        print("  [OK] Seeded 2 inventory items")
-
 
 # ════════════════════════════════════════════════════════════════════
 # SERVE UI
@@ -1019,6 +1045,10 @@ def vendor_page():
 # RUN
 # ════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     print("\n  B2P Platform starting on http://localhost:5000\n")
-    seed_data()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    threaded = not debug  # dev reloader already forks; use threads in normal runs
+    # For production, prefer a real WSGI server:
+    #   gunicorn -w 4 -b 0.0.0.0:5000 --threads 2 app:app
+    app.run(host="0.0.0.0", port=5000, debug=debug, threaded=threaded,
+            use_reloader=debug)

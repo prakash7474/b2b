@@ -219,7 +219,7 @@ async function loadBatches() {
             <td>${statusBadge(b.status)}</td>
             <td>
               ${b.status === 'created' ? `<button class="btn btn-sm btn-primary" onclick="showAssignModal('${b.batch_id}')">Assign</button>` : ''}
-              ${b.status === 'received' ? `<button class="btn btn-sm btn-info" onclick="showSpoilageForBatch('${b.batch_id}')">ML Risk</button>` : ''}
+              ${b.vendor_id ? `<button class="btn btn-sm btn-info" onclick="showSpoilageForBatch('${b.batch_id}')">ML Risk</button>` : ''}
               <button class="btn btn-sm btn-danger" onclick="deleteBatch('${b.batch_id}')">Delete</button>
             </td>
           </tr>`).join('')}
@@ -467,7 +467,7 @@ async function loadDemandForm() {
         <div class="form-group"><label>Window</label><select id="d-window"><option value="morning">Morning</option><option value="evening">Evening</option></select></div>
         <div class="form-group"><label>Temperature (°C)</label><input type="number" id="d-temp" value="31" step="0.1"></div>
         <div class="form-group"><label>Rain Probability</label><input type="number" id="d-rain" value="0.2" step="0.01"></div>
-        <div class="form-group"><label>Locality</label><select id="d-loc"><option value="residential_budget">Residential Budget</option><option value="commercial">Commercial</option><option value="residential_premium">Residential Premium</option><option value="institutional">Institutional</option></select></div>
+        <div class="form-group"><label>Locality</label><select id="d-loc"><option value="residential_budget">Residential Budget</option><option value="commercial_offices">Commercial Offices</option><option value="residential_premium">Residential Premium</option><option value="institutional">Institutional</option><option value="mixed">Mixed</option></select></div>
         <div class="form-group"><label>Festival</label><select id="d-fest"><option value="none">None</option><option value="diwali">Diwali</option><option value="harvestFestival">Harvest</option></select></div>
         <div class="form-group"><label>Hotspot Score</label><input type="number" id="d-hot" value="33"></div>
         <div class="form-group"><label>Available Stock</label><input type="number" id="d-stock" value="20"></div>

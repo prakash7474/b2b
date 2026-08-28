@@ -17,6 +17,7 @@
 9. [Setup & Installation](#9-setup--installation)
 10. [Retraining Models](#10-retraining-models)
 11. [Troubleshooting](#11-troubleshooting)
+12. [Database Performance & MongoDB Optimization](#12-database-performance--mongodb-optimization)
 
 ---
 
