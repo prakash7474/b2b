@@ -1,7 +1,0 @@
-pymongo[srv]
-python-dotenv
-fastapi
-uvicorn
-joblib
-scikit-learn
-numpy

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2P — Vendor Portal</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f0f2f5;color:#1a1a2e;min-height:100vh}
+header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:16px 32px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+header h1{font-size:20px;font-weight:700}
+header h1 span{color:#4ecca3}
+.header-right{display:flex;align-items:center;gap:16px}
+.vendor-name{font-size:13px;color:rgba(255,255,255,.7)}
+.logout-btn{background:rgba(255,255,255,.15);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:.2s}
+.logout-btn:hover{background:rgba(255,255,255,.25)}
+
+.container{max-width:900px;margin:0 auto;padding:24px 32px}
+
+.welcome{background:linear-gradient(135deg,#4ecca3,#38b28a);color:#fff;border-radius:12px;padding:24px;margin-bottom:24px}
+.welcome h2{font-size:22px;margin-bottom:4px}
+.welcome p{font-size:13px;opacity:.85}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.06);border:1px solid #e8eaed;text-align:center}
+.stat-card .num{font-size:28px;font-weight:800;color:#1a1a2e}
+.stat-card .lbl{font-size:11px;color:#888;text-transform:uppercase;margin-top:2px}
+.stat-card.assigned .num{color:#f39c12}
+.stat-card.received .num{color:#27ae60}
+.stat-card.pending .num{color:#e74c3c}
+
+.card{background:#fff;border-radius:12px;border:1px solid #e8eaed;overflow:hidden;margin-bottom:20px}
+.card-header{padding:14px 20px;border-bottom:1px solid #e8eaed;display:flex;justify-content:space-between;align-items:center}
+.card-header h3{font-size:15px;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;background:#f8f9fa;color:#888;font-weight:600;font-size:12px;text-transform:uppercase;border-bottom:2px solid #e8eaed}
+td{padding:10px 14px;border-bottom:1px solid #eee}
+tr:hover td{background:#f8fffd}
+
+.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+.badge-assigned{background:#fff8e1;color:#f57f17}
+.badge-received{background:#e8f5e9;color:#2e7d32}
+.badge-created{background:#e3f2fd;color:#1565c0}
+
+.btn{padding:8px 20px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:.2s}
+.btn-receive{background:linear-gradient(135deg,#4ecca3,#38b28a);color:#fff}
+.btn-receive:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(78,204,163,.35)}
+.btn-receive:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-done{background:#e8f5e9;color:#2e7d32;cursor:default}
+
+.empty{text-align:center;padding:40px;color:#bbb;font-size:14px}
+
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 24px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;z-index:1000;animation:slideUp .3s ease}
+.toast.success{background:#27ae60}
+.toast.error{background:#e74c3c}
+@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
+.modal{background:#fff;border-radius:12px;width:450px;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.2);position:relative}
+.modal h3{margin-bottom:16px;font-size:18px}
+.modal .close{position:absolute;top:16px;right:20px;background:none;border:none;font-size:20px;cursor:pointer;color:#888}
+.modal textarea{width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;resize:vertical;min-height:60px;font-family:inherit}
+.modal textarea:focus{outline:none;border-color:#4ecca3}
+.modal .btn-row{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.modal .btn-cancel{background:#f0f2f5;color:#555}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>B2P <span>Vendor Portal</span></h1>
+  <div class="header-right">
+    <span class="vendor-name" id="vendor-name">Loading...</span>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+  </div>
+</header>
+
+<div class="container">
+  <div class="welcome" id="welcome">
+    <h2>Welcome!</h2>
+    <p>View your assigned batter batches and confirm receipt.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card assigned"><div class="num" id="stat-assigned">0</div><div class="lbl">Assigned (awaiting receipt)</div></div>
+    <div class="stat-card received"><div class="num" id="stat-received">0</div><div class="lbl">Received</div></div>
+    <div class="stat-card pending"><div class="num" id="stat-total">0</div><div class="lbl">Total Batches</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>Your Batches</h3></div>
+    <div id="batch-list"><div class="empty">Loading...</div></div>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+
+<script>
+const API = '';
+let vendorId = '';
+let batches = [];
+
+function toast(msg, type='success') {
+  const el = document.createElement('div'); el.className = 'toast ' + type; el.textContent = msg;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 3000);
+}
+
+function fmtDate(d) {
+  if (!d) return '-';
+  return new Date(d).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'}) + ' ' +
+    new Date(d).toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit'});
+}
+
+async function logout() {
+  await fetch('/api/logout', {method: 'POST'});
+  window.location.href = '/login';
+}
+
+async function loadBatches() {
+  try {
+    const me = await fetch('/api/me').then(r => r.json());
+    if (!me.loggedIn || me.role !== 'vendor') {
+      window.location.href = '/login';
+      return;
+    }
+    vendorId = me.vendor_id;
+    document.getElementById('vendor-name').textContent = me.shop_name + ' (' + me.vendor_id + ')';
+    document.getElementById('welcome').querySelector('h2').textContent = 'Welcome, ' + me.shop_name + '!';
+
+    batches = await fetch(API + '/api/batches?vendor_id=' + vendorId).then(r => r.json());
+
+    const assigned = batches.filter(b => b.status === 'assigned').length;
+    const received = batches.filter(b => b.status === 'received').length;
+
+    document.getElementById('stat-assigned').textContent = assigned;
+    document.getElementById('stat-received').textContent = received;
+    document.getElementById('stat-total').textContent = batches.length;
+
+    renderBatches();
+  } catch(e) {
+    console.error(e);
+    window.location.href = '/login';
+  }
+}
+
+function renderBatches() {
+  const el = document.getElementById('batch-list');
+  if (!batches.length) {
+    el.innerHTML = '<div class="empty">No batches assigned to you yet.</div>';
+    return;
+  }
+
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Batch ID</th><th>Product</th><th>Volume</th><th>pH</th>
+        <th>Temp</th><th>Manufactured</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+        ${batches.map(b => `<tr>
+          <td><strong>${b.batch_id}</strong></td>
+          <td>${b.product_name}</td>
+          <td>${b.volume_kg} kg</td>
+          <td>${b.initialPH}</td>
+          <td>${b.temperatureC}°C</td>
+          <td>${fmtDate(b.mfg_timestamp)}</td>
+          <td>${b.status === 'received'
+            ? '<span class="badge badge-received">✓ Received</span>'
+            : '<span class="badge badge-assigned">Awaiting Receipt</span>'
+          }</td>
+          <td>
+            ${b.status === 'assigned'
+              ? `<button class="btn btn-receive" onclick="showReceiveModal('${b.batch_id}')">Confirm Receipt</button>`
+              : `<button class="btn btn-sm" style="background:var(--info);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:11px" onclick="showBatchSpoilage('${b.batch_id}')">ML Risk</button>`
+            }
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function showBatchSpoilage(batchId) {
+  const d = await fetch(API + '/api/batches/' + batchId + '/predict-spoilage').then(r=>r.json());
+  if (d.error) { toast(d.error, 'error'); return; }
+  const riskCls = d.mlRiskLabel === 'Low' ? 'badge-low' : d.mlRiskLabel === 'Medium' ? 'badge-medium' : 'badge-high';
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)this.remove()">
+      <div class="modal" style="width:500px">
+        <button class="close" onclick="this.closest('.modal-overlay').remove()">x</button>
+        <h3> spoilage Risk — ${d.productId}</h3>
+        <div style="background:linear-gradient(135deg,#f8fffe,#e8f8f0);border:2px solid #4ecca3;border-radius:12px;padding:20px;margin:16px 0">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;text-align:center">
+            <div><div style="font-size:24px;font-weight:800"><span class="badge ${riskCls}" style="font-size:16px;padding:6px 14px">${d.mlRiskLabel}</span></div><div style="font-size:11px;color:#888;text-transform:uppercase;margin-top:4px">Risk Level</div></div>
+            <div><div style="font-size:24px;font-weight:800">${d.mlConfidence}%</div><div style="font-size:11px;color:#888;text-transform:uppercase;margin-top:4px">Confidence</div></div>
+            <div><div style="font-size:24px;font-weight:800">${(d.freshnessScore*100).toFixed(0)}%</div><div style="font-size:11px;color:#888;text-transform:uppercase;margin-top:4px">Freshness</div></div>
+          </div>
+          <div style="margin-top:12px;text-align:center">${Object.entries(d.mlProbabilities).map(([k,v])=>`<span class="badge badge-${k.toLowerCase()}" style="margin:2px">${k}: ${v}%</span>`).join('')}</div>
+        </div>
+        <div style="font-size:12px;color:#888">
+          <div>Hours since manufacture: <strong>${d.hoursSinceManufacture}h</strong></div>
+          <div>Hours to expiry: <strong>${d.hoursToExpiry}h</strong></div>
+          <div>Sell-through rate: <strong>${(d.sellThroughRate*100).toFixed(0)}%</strong></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showReceiveModal(batchId) {
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)this.remove()">
+      <div class="modal">
+        <button class="close" onclick="this.closest('.modal-overlay').remove()">x</button>
+        <h3>Confirm Receipt</h3>
+        <p style="font-size:13px;color:#888;margin-bottom:16px">Batch: <strong>${batchId}</strong></p>
+        <div style="margin-bottom:12px">
+          <label style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.5px">Notes (optional)</label>
+          <textarea id="receive-notes" placeholder="e.g., Good quality, delivered on time, packaging okay..."></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-cancel" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+          <button class="btn btn-receive" onclick="confirmReceive('${batchId}')">✓ Confirm Receipt</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function confirmReceive(batchId) {
+  const notes = document.getElementById('receive-notes').value;
+  try {
+    const res = await fetch(API + '/api/batches/' + batchId + '/receive', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notes}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    document.getElementById('modal-container').innerHTML = '';
+    toast('Batch ' + batchId + ' received successfully!');
+    loadBatches();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+loadBatches();
+</script>
+</body>
+</html>
