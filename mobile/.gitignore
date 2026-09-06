@@ -1,0 +1,21 @@
+# Expo / React Native
+node_modules/
+.expo/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Native
+ios/
+android/
+
+# Editor / OS
+.DS_Store
+*.log
+.vscode/

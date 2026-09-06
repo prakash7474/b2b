@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "B2P Mobile",
+    "slug": "b2p-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "b2pmobile",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.b2p.mobile"
+    },
+    "android": {
+      "package": "com.b2p.mobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}
