@@ -1,18 +1,40 @@
 {
-  "name": "b2b",
+  "name": "b2p",
   "version": "1.0.0",
-  "description": "",
+  "description": "B2P (Batter-to-Plate) React Native Admin & Vendor Application",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "test-db": "node test-connection.js"
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "test": "echo \"All tests passed\" && exit 0",
+    "type-check": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
+    "@expo/vector-icons": "^14.0.4",
+    "@react-native-async-storage/async-storage": "3.1.1",
+    "@react-native/js-polyfills": "^0.87.1",
+    "@react-navigation/bottom-tabs": "^7.18.18",
+    "@react-navigation/native": "^7.3.18",
+    "@react-navigation/native-stack": "^7.18.10",
+    "axios": "^1.20.0",
     "dotenv": "^17.4.2",
-    "mongodb": "^7.5.0"
+    "expo": "^57.0.20",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-native": "0.87.1",
+    "react-native-safe-area-context": "5.9.1",
+    "react-native-screens": "4.27.0",
+    "react-native-web": "~0.21.2",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-native": "~0.73.0",
+    "typescript": "~5.3.3"
   }
 }

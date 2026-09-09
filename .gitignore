@@ -3,6 +3,17 @@
 .env
 atlas-credentials.env
 
+# Dependencies & Virtualenvs
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Expo & Web builds
+.expo/
+web-build/
+dist/
+
 # Large archives
 *.zip
 
