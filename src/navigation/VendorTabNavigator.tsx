@@ -1,22 +1,12 @@
 import React from 'react';
 import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import { colors } from '../theme';
+import { colors, typography } from '../theme';
 
 import { VendorHomeScreen } from '../screens/vendor/VendorHomeScreen';
 import { VendorBatchListScreen } from '../screens/vendor/VendorBatchListScreen';
-import { BatchSpoilageScreen } from '../screens/vendor/BatchSpoilageScreen';
 import { VendorDemandScreen } from '../screens/vendor/VendorDemandScreen';
-
-const BatchStackNav = createNativeStackNavigator();
-const VendorBatchStack = () => (
-  <BatchStackNav.Navigator screenOptions={{ headerShown: false }}>
-    <BatchStackNav.Screen name="BatchList" component={VendorBatchListScreen} />
-    <BatchStackNav.Screen name="BatchSpoilage" component={BatchSpoilageScreen} />
-  </BatchStackNav.Navigator>
-);
 
 const Tab = createBottomTabNavigator();
 
@@ -25,17 +15,19 @@ export const VendorTabNavigator: React.FC = () => {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#4ecca3',
-        tabBarInactiveTintColor: '#888',
+        tabBarActiveTintColor: colors.clayTerracotta,
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
-          backgroundColor: '#ffffff',
-          borderTopColor: '#e8eaed',
+          backgroundColor: colors.surface,
+          borderTopWidth: 1.5,
+          borderTopColor: colors.inkCharcoal,
           paddingBottom: 4,
           height: 60,
         },
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '700',
+          fontSize: 11,
+          fontWeight: '800',
+          fontFamily: typography.body,
         },
       }}
     >
@@ -44,23 +36,19 @@ export const VendorTabNavigator: React.FC = () => {
         component={VendorHomeScreen}
         options={{
           tabBarLabel: 'Home',
-          tabBarIcon: () => <Text style={{ fontSize: 13, fontWeight: '700', color: colors.inkCharcoal }}>H</Text>,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 13, fontWeight: '900', color }}>H</Text>
+          ),
         }}
       />
       <Tab.Screen
         name="My Batches"
-        component={VendorBatchStack}
+        component={VendorBatchListScreen}
         options={{
           tabBarLabel: 'My Batches',
-          tabBarIcon: () => <Text style={{ fontSize: 13, fontWeight: '700', color: colors.inkCharcoal }}>B</Text>,
-        }}
-      />
-      <Tab.Screen
-        name="Spoilage Check"
-        component={BatchSpoilageScreen}
-        options={{
-          tabBarLabel: 'Spoilage Check',
-          tabBarIcon: () => <Text style={{ fontSize: 13, fontWeight: '700', color: colors.inkCharcoal }}>S</Text>,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 13, fontWeight: '900', color }}>B</Text>
+          ),
         }}
       />
       <Tab.Screen
@@ -68,7 +56,9 @@ export const VendorTabNavigator: React.FC = () => {
         component={VendorDemandScreen}
         options={{
           tabBarLabel: 'Demand Forecast',
-          tabBarIcon: () => <Text style={{ fontSize: 13, fontWeight: '700', color: colors.inkCharcoal }}>D</Text>,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 13, fontWeight: '900', color }}>D</Text>
+          ),
         }}
       />
     </Tab.Navigator>

@@ -52,4 +52,16 @@ export const predictionService = {
     const res = await api.get<PredictionStats>('/api/stats');
     return res.data;
   },
+
+  async getFestivalCalendar(region?: string): Promise<any[]> {
+    const params = region ? { region } : {};
+    const res = await api.get<any[]>('/api/festival-calendar', { params });
+    return res.data;
+  },
+
+  async getWeatherForecast(date?: string): Promise<any> {
+    const params = date ? { date } : {};
+    const res = await api.get<any>('/api/weather-forecast', { params });
+    return res.data;
+  },
 };

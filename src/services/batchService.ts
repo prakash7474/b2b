@@ -35,4 +35,17 @@ export const batchService = {
     const res = await api.get<any[]>('/api/products');
     return res.data;
   },
+
+  async getBatch(batchId: string): Promise<Batch> {
+    const res = await api.get<Batch>(`/api/batches/${encodeURIComponent(batchId)}`);
+    return res.data;
+  },
+
+  async reportIssue(batchId: string, issueType: string, description: string): Promise<{ ok: boolean; message?: string }> {
+    const res = await api.post<{ ok: boolean; message?: string }>(
+      `/api/batches/${encodeURIComponent(batchId)}/report-issue`,
+      { issue_type: issueType, description }
+    );
+    return res.data;
+  },
 };

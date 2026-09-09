@@ -1,10 +1,36 @@
 import { api } from './api';
-import { InventoryItem } from '../types/batch';
+import { InventoryItem, InventorySummary, RestockOrder } from '../types/batch';
 
 export const inventoryService = {
   async getInventory(vendorId?: string): Promise<InventoryItem[]> {
     const params = vendorId ? { vendorId } : {};
     const res = await api.get<InventoryItem[]>('/api/inventory', { params });
+    return res.data;
+  },
+
+  async getInventorySummary(vendorId: string): Promise<InventorySummary> {
+    const res = await api.get<InventorySummary>('/api/inventory/summary', {
+      params: { vendor_id: vendorId },
+    });
+    return res.data;
+  },
+
+  async getOrders(vendorId?: string): Promise<RestockOrder[]> {
+    const params = vendorId ? { vendor_id: vendorId } : {};
+    const res = await api.get<RestockOrder[]>('/api/orders', { params });
+    return res.data;
+  },
+
+  async requestRestock(payload: {
+    vendor_id: string;
+    product_name?: string;
+    requested_quantity_kg: number;
+    notes?: string;
+  }): Promise<{ ok: boolean; order_id: string; order?: RestockOrder }> {
+    const res = await api.post<{ ok: boolean; order_id: string; order?: RestockOrder }>(
+      '/api/orders',
+      payload
+    );
     return res.data;
   },
 

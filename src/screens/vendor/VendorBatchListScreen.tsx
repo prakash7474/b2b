@@ -9,21 +9,27 @@ import {
   SafeAreaView,
   ActivityIndicator,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../../store/authStore';
 import { useBatchStore } from '../../store/batchStore';
+import { usePredictionStore } from '../../store/predictionStore';
 import { Batch } from '../../types/batch';
 import { BatchStatusBadge } from '../../components/BatchStatusBadge';
 import { ReceiveBatchModal } from './ReceiveBatchModal';
+import { SpoilageRiskDialog } from './SpoilageRiskDialog';
+import { ReportIssueModal } from './ReportIssueModal';
+import { colors, typography } from '../../theme';
 
 export const VendorBatchListScreen: React.FC = () => {
-  const navigation = useNavigation<any>();
   const { vendor_id } = useAuthStore();
   const { batches, fetchBatches, isLoading } = useBatchStore();
+  const { fetchBatchSpoilage, batchSpoilage } = usePredictionStore();
 
   const [filter, setFilter] = useState<'all' | 'assigned' | 'received'>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [receiveBatchTarget, setReceiveBatchTarget] = useState<Batch | null>(null);
+  const [reportIssueTarget, setReportIssueTarget] = useState<Batch | null>(null);
+  const [spoilageTarget, setSpoilageTarget] = useState<Batch | null>(null);
+  const [spoilageLoading, setSpoilageLoading] = useState(false);
 
   const loadData = async () => {
     if (vendor_id) {
@@ -41,99 +47,152 @@ export const VendorBatchListScreen: React.FC = () => {
     setRefreshing(false);
   };
 
+  const handleCheckSpoilage = async (batch: Batch) => {
+    setSpoilageTarget(batch);
+    setSpoilageLoading(true);
+    try {
+      await fetchBatchSpoilage(batch.batch_id);
+    } catch (err) {
+      console.warn('fetchBatchSpoilage error:', err);
+    } finally {
+      setSpoilageLoading(false);
+    }
+  };
+
   const vendorBatches = batches.filter((b) => {
     if (filter === 'all') return true;
     return b.status === filter;
   });
 
-  const renderItem = ({ item }: { item: Batch }) => (
-    <View style={styles.card}>
-      <View style={styles.cardTop}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.batchId}>{item.batch_id}</Text>
-          <Text style={styles.productName}>{item.product_name}</Text>
-        </View>
-        <BatchStatusBadge status={item.status} />
-      </View>
+  const formatMfgDate = (dateStr?: string) => {
+    if (!dateStr) return 'Recently milled';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
 
-      <View style={styles.metaGrid}>
-        <View style={styles.metaItem}>
-          <Text style={styles.metaLbl}>Volume</Text>
-          <Text style={styles.metaVal}>{item.volume_kg} kg</Text>
-        </View>
-        <View style={styles.metaItem}>
-          <Text style={styles.metaLbl}>Initial pH</Text>
-          <Text style={styles.metaVal}>{item.initialPH}</Text>
-        </View>
-        <View style={styles.metaItem}>
-          <Text style={styles.metaLbl}>Mfg Temp</Text>
-          <Text style={styles.metaVal}>{item.temperatureC}°C</Text>
-        </View>
-        <View style={styles.metaItem}>
-          <Text style={styles.metaLbl}>Batch No</Text>
-          <Text style={styles.metaVal}>{item.batch_number || item.batch_id}</Text>
-        </View>
-      </View>
+  const renderItem = ({ item }: { item: Batch }) => {
+    const isAssigned = item.status === 'assigned';
+    const isReceived = item.status === 'received';
+    const mfgDisplay = formatMfgDate(item.mfgTimestamp || item.mfg_timestamp || item.created_at);
 
-      {item.notes ? (
-        <View style={styles.notesBox}>
-          <Text style={styles.notesText}>Notes: {item.notes}</Text>
+    return (
+      <View style={styles.card}>
+        {/* Top Header */}
+        <View style={styles.cardTop}>
+          <View style={{ flex: 1 }}>
+            <View style={styles.batchIdRow}>
+              <Text style={styles.batchId}>Batch #{item.batch_id}</Text>
+              <Text style={styles.mfgSubText}>• Milled: {mfgDisplay}</Text>
+            </View>
+            <Text style={styles.productName}>{item.product_name || 'Idli Batter'}</Text>
+          </View>
+          <BatchStatusBadge status={item.status} />
         </View>
-      ) : null}
 
-      <View style={styles.actionRow}>
-        {item.status === 'assigned' ? (
-          <TouchableOpacity
-            style={styles.receiveBtn}
-            onPress={() => setReceiveBatchTarget(item)}
-          >
-            <Text style={styles.receiveBtnText}>✓ Confirm Receipt</Text>
-          </TouchableOpacity>
+        {/* Technical Ledger Row */}
+        <View style={styles.metaGrid}>
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLbl}>Dispatched Volume</Text>
+            <Text style={styles.metaVal}>{item.volume_kg} kg</Text>
+          </View>
+          <View style={styles.verticalDivider} />
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLbl}>Initial pH</Text>
+            <Text style={styles.metaVal}>{item.initialPH}</Text>
+          </View>
+          <View style={styles.verticalDivider} />
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLbl}>Dispatch Temp</Text>
+            <Text style={styles.metaVal}>{item.temperatureC}°C</Text>
+          </View>
+          <View style={styles.verticalDivider} />
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLbl}>Ferment Age</Text>
+            <Text style={styles.metaVal}>{item.fermentationHours}h</Text>
+          </View>
+        </View>
+
+        {item.notes ? (
+          <View style={styles.notesBox}>
+            <Text style={styles.notesText}>Kitchen Notes: {item.notes}</Text>
+          </View>
         ) : null}
 
-        {item.status === 'received' ? (
+        {/* Action Button Row */}
+        <View style={styles.actionRow}>
+          {isAssigned && (
+            <TouchableOpacity
+              style={styles.receiveBtn}
+              onPress={() => setReceiveBatchTarget(item)}
+            >
+              <Text style={styles.receiveBtnText}>✓ Confirm Delivery Receipt</Text>
+            </TouchableOpacity>
+          )}
+
+          {isReceived && (
+            <TouchableOpacity
+              style={styles.spoilageBtn}
+              onPress={() => handleCheckSpoilage(item)}
+            >
+              <Text style={styles.spoilageBtnText}>Check Spoilage Risk & Action →</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
-            style={styles.spoilageBtn}
-            onPress={() =>
-              navigation.navigate('BatchSpoilage', { batchId: item.batch_id })
-            }
+            style={styles.reportIssueBtn}
+            onPress={() => setReportIssueTarget(item)}
           >
-            <Text style={styles.spoilageBtnText}>Check Spoilage Risk →</Text>
+            <Text style={styles.reportIssueBtnText}>Report Incident</Text>
           </TouchableOpacity>
-        ) : null}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.topBar}>
-        <Text style={styles.title}>My Batches ({vendorBatches.length})</Text>
+        <Text style={styles.title}>Assigned & Received Batches</Text>
+        <Text style={styles.subtitle}>
+          Track incoming dispatch batches, confirm store delivery, inspect spoilage risks, and log incidents.
+        </Text>
       </View>
 
+      {/* Filter Chips Bar */}
       <View style={styles.filterRow}>
-        {(['all', 'assigned', 'received'] as const).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.filterChip, filter === tab && styles.filterChipActive]}
-            onPress={() => setFilter(tab)}
-          >
-            <Text
-              style={[styles.filterText, filter === tab && styles.filterTextActive]}
+        {(['all', 'assigned', 'received'] as const).map((tab) => {
+          const isSelected = filter === tab;
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.filterChip, isSelected && styles.filterChipActive]}
+              onPress={() => setFilter(tab)}
             >
-              {tab === 'all'
-                ? 'All'
-                : tab === 'assigned'
-                ? 'Awaiting Receipt'
-                : 'Received'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text style={[styles.filterText, isSelected && styles.filterTextActive]}>
+                {tab === 'all'
+                  ? `All (${batches.length})`
+                  : tab === 'assigned'
+                  ? `Awaiting Receipt (${batches.filter((b) => b.status === 'assigned').length})`
+                  : `In Store (${batches.filter((b) => b.status === 'received').length})`}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {isLoading && !refreshing && batches.length === 0 ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#4ecca3" />
+          <ActivityIndicator size="large" color={colors.clayTerracotta} />
+          <Text style={styles.loadingText}>Loading assigned batches...</Text>
         </View>
       ) : (
         <FlatList
@@ -142,19 +201,26 @@ export const VendorBatchListScreen: React.FC = () => {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.clayTerracotta}
+              colors={[colors.clayTerracotta]}
+            />
           }
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>No batches found</Text>
+              <Text style={styles.emptyGlyph}>•</Text>
+              <Text style={styles.emptyText}>No batches in this view</Text>
               <Text style={styles.emptySub}>
-                When the central kitchen assigns batter to your shop, it will appear here.
+                When central kitchen assigns batter batches to your shop, they will automatically appear here for delivery receipt.
               </Text>
             </View>
           }
         />
       )}
 
+      {/* Confirm Receipt Modal */}
       {receiveBatchTarget ? (
         <ReceiveBatchModal
           visible={!!receiveBatchTarget}
@@ -166,6 +232,26 @@ export const VendorBatchListScreen: React.FC = () => {
           }}
         />
       ) : null}
+
+      {/* Spoilage Risk Dialog */}
+      <SpoilageRiskDialog
+        visible={!!spoilageTarget}
+        batch={spoilageTarget}
+        spoilage={batchSpoilage}
+        loading={spoilageLoading}
+        onClose={() => setSpoilageTarget(null)}
+      />
+
+      {/* Report Incident Modal */}
+      <ReportIssueModal
+        visible={!!reportIssueTarget}
+        batch={reportIssueTarget}
+        onClose={() => setReportIssueTarget(null)}
+        onSuccess={() => {
+          setReportIssueTarget(null);
+          loadData();
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -173,158 +259,225 @@ export const VendorBatchListScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f0f2f5',
+    backgroundColor: colors.batterCream,
   },
   topBar: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.inkCharcoal,
   },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#1a1a2e',
+    color: colors.inkCharcoal,
+    fontFamily: typography.heading,
+  },
+  subtitle: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
   },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surfaceElevated,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.borderLight,
     gap: 8,
   },
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#f0f2f5',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.backgroundAlt,
   },
   filterChipActive: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.clayTerracotta,
+    borderColor: colors.inkCharcoal,
   },
   filterText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
   filterTextActive: {
-    color: '#ffffff',
+    color: colors.textInverse,
   },
   listContent: {
-    padding: 16,
-    paddingBottom: 40,
+    padding: 12,
+    paddingBottom: 48,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
+    backgroundColor: colors.paperWhite,
+    borderRadius: 4,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e8eaed',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1.5,
+    borderTopWidth: 3,
+    borderColor: colors.inkCharcoal,
   },
   cardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
+  batchIdRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   batchId: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#1a1a2e',
+    fontSize: 16,
+    fontWeight: '900',
+    color: colors.inkCharcoal,
+  },
+  mfgSubText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '600',
   },
   productName: {
-    fontSize: 14,
-    color: '#555',
-    fontWeight: '600',
+    fontSize: 13,
+    color: colors.clayTerracotta,
+    fontWeight: '700',
     marginTop: 2,
   },
   metaGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 4,
     marginTop: 12,
     paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#f8f9fa',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f8f9fa',
+    paddingHorizontal: 8,
   },
   metaItem: {
+    flex: 1,
     alignItems: 'center',
   },
   metaLbl: {
-    fontSize: 10,
-    color: '#888',
+    fontSize: 9,
+    color: colors.textSecondary,
     textTransform: 'uppercase',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   metaVal: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    color: colors.inkCharcoal,
     marginTop: 2,
   },
+  verticalDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: colors.borderHairline,
+  },
   notesBox: {
-    backgroundColor: '#fdfbf7',
+    backgroundColor: colors.backgroundAlt,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.turmericGold,
     padding: 8,
-    borderRadius: 6,
-    marginTop: 8,
+    borderRadius: 2,
+    marginTop: 10,
   },
   notesText: {
     fontSize: 12,
-    color: '#7f6000',
+    color: colors.inkCharcoal,
   },
   actionRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 12,
   },
   receiveBtn: {
-    backgroundColor: '#4ecca3',
-    paddingHorizontal: 16,
+    backgroundColor: colors.bananaGreen,
+    paddingHorizontal: 14,
     paddingVertical: 9,
-    borderRadius: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
   },
   receiveBtnText: {
-    color: '#1a1a2e',
+    color: colors.textInverse,
     fontWeight: '800',
-    fontSize: 13,
+    fontSize: 12,
+    letterSpacing: 0.3,
   },
   spoilageBtn: {
-    backgroundColor: '#3498db',
+    backgroundColor: colors.clayTerracotta,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: 9,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
   },
   spoilageBtnText: {
-    color: '#ffffff',
+    color: colors.textInverse,
+    fontWeight: '800',
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  reportIssueBtn: {
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  reportIssueBtnText: {
+    color: colors.rustRed,
     fontWeight: '700',
-    fontSize: 13,
+    fontSize: 12,
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 32,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 10,
   },
   empty: {
     alignItems: 'center',
-    paddingTop: 60,
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+  },
+  emptyGlyph: {
+    fontSize: 32,
+    color: colors.borderLight,
+    marginBottom: 8,
   },
   emptyText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#999',
+    fontWeight: '800',
+    color: colors.inkCharcoal,
+    fontFamily: typography.heading,
   },
   emptySub: {
     fontSize: 13,
-    color: '#aaa',
+    color: colors.textSecondary,
     marginTop: 6,
     textAlign: 'center',
-    paddingHorizontal: 24,
+    lineHeight: 18,
   },
 });

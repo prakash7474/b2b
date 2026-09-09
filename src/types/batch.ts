@@ -21,6 +21,7 @@ export interface Batch {
   assigned_at?: string;
   received_at?: string;
   mfg_timestamp?: string;
+  mfgTimestamp?: string;
 }
 
 export interface CreateBatchInput {
@@ -34,6 +35,7 @@ export interface CreateBatchInput {
   humidityPct: number;
   fermentationHours: number;
   notes?: string;
+  mfgTimestamp?: string;
 }
 
 export interface InventoryItem {
@@ -45,8 +47,40 @@ export interface InventoryItem {
   vendor_name?: string;
   quantity: number;
   minimum_stock: number;
+  minimumStock?: number;
   freshness_score: number;
+  freshnessScore?: number;
   freshness_risk?: 'Low' | 'Medium' | 'High';
+  receivedAt?: string;
+  expiryAt?: string;
   status: string;
   last_updated?: string;
+}
+
+export interface InventorySummary {
+  vendorId: string;
+  totalQuantityKg: number;
+  minimumStockKg: number;
+  belowMinimum: boolean;
+  batchCount: number;
+  receivedBatchCount: number;
+  oldestBatchAgeHrs: number;
+  freshnessScore: number;
+  products: string[];
+}
+
+export interface RestockOrder {
+  _id?: string;
+  order_id: string;
+  vendor_id: string;
+  user_id?: string;
+  product_name: string;
+  quantity_kg: number;
+  total_amount?: number;
+  payment_method?: string;
+  payment_status?: string;
+  order_status: string;
+  notes?: string;
+  order_date?: string;
+  created_at?: string;
 }

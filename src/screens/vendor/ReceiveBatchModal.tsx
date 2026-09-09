@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Batch } from '../../types/batch';
 import { useBatchStore } from '../../store/batchStore';
+import { colors, typography } from '../../theme';
 
 interface ReceiveBatchModalProps {
   visible: boolean;
@@ -38,7 +39,7 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
     if (ok) {
       Alert.alert(
         'Receipt Confirmed',
-        `Batch ${batch.batch_id} (${batch.product_name}) received and added to active inventory!`,
+        `Batch #${batch.batch_id} (${batch.product_name}) received and added to active store inventory!`,
         [{ text: 'OK', onPress: onSuccess }]
       );
     } else {
@@ -47,49 +48,68 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay}>
         <View style={styles.card}>
-          <Text style={styles.title}>Confirm Batch Delivery</Text>
-          <Text style={styles.subtitle}>
-            You are confirming receipt for {batch.batch_id} ({batch.product_name} • {batch.volume_kg}kg)
-          </Text>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.infoLine}>Initial pH: {batch.initialPH}</Text>
-            <Text style={styles.infoLine}>Delivery Temp: {batch.temperatureC}°C</Text>
-            <Text style={styles.infoLine}>Manufacturer: {batch.manufacturer}</Text>
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.title}>Confirm Batch Delivery</Text>
+              <Text style={styles.subtitle}>
+                Batch #{batch.batch_id} • {batch.product_name} ({batch.volume_kg} kg)
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose} disabled={loading}>
+              <Text style={styles.closeBtnText}>✕</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Delivery Notes (Optional)</Text>
-            <TextInput
-              style={styles.textArea}
-              value={notes}
-              onChangeText={setNotes}
-              placeholder="e.g. Delivered in chilled cooler box, condition intact..."
-              placeholderTextColor="#999"
-              multiline
-              numberOfLines={3}
-            />
-          </View>
+          <View style={styles.body}>
+            <View style={styles.infoBox}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Initial pH:</Text>
+                <Text style={styles.infoValue}>{batch.initialPH}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Delivery Temp:</Text>
+                <Text style={styles.infoValue}>{batch.temperatureC}°C</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Manufacturer:</Text>
+                <Text style={styles.infoValue}>{batch.manufacturer || 'Central Kitchen'}</Text>
+              </View>
+            </View>
 
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Delivery Handoff Notes (Optional)</Text>
+              <TextInput
+                style={styles.textArea}
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="e.g. Received intact in insulated cold tote, seal unbroken..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
 
-            <TouchableOpacity
-              style={[styles.confirmBtn, loading && styles.disabledBtn]}
-              onPress={handleConfirm}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.confirmBtnText}>✓ Confirm Receipt</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmBtn, loading && styles.disabledBtn]}
+                onPress={handleConfirm}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color={colors.textInverse} />
+                ) : (
+                  <Text style={styles.confirmBtnText}>✓ Confirm Receipt</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </SafeAreaView>
@@ -100,94 +120,132 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(43, 36, 30, 0.65)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   card: {
     width: '100%',
     maxWidth: 480,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 6,
+    backgroundColor: colors.paperWhite,
+    borderWidth: 1.5,
+    borderTopWidth: 3.5,
+    borderColor: colors.inkCharcoal,
+    borderRadius: 4,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.inkCharcoal,
+    backgroundColor: colors.backgroundAlt,
   },
   title: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
-    color: '#1a1a2e',
+    color: colors.inkCharcoal,
+    fontFamily: typography.heading,
   },
   subtitle: {
-    fontSize: 13,
-    color: '#666',
-    marginTop: 4,
-    marginBottom: 14,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  closeBtn: {
+    padding: 4,
+  },
+  closeBtnText: {
+    fontSize: 18,
+    color: colors.inkCharcoal,
+    fontWeight: '700',
+  },
+  body: {
+    padding: 16,
   },
   infoBox: {
-    backgroundColor: '#f8f9fa',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 4,
+    padding: 10,
     marginBottom: 14,
     gap: 4,
   },
-  infoLine: {
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  infoLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  infoValue: {
     fontSize: 12,
-    color: '#444',
+    fontWeight: '800',
+    color: colors.inkCharcoal,
   },
   formGroup: {
     marginBottom: 16,
   },
   label: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#555',
+    fontWeight: '800',
+    color: colors.inkCharcoal,
     textTransform: 'uppercase',
     letterSpacing: 0.4,
     marginBottom: 6,
   },
   textArea: {
-    backgroundColor: '#fafafa',
+    backgroundColor: colors.surfaceElevated,
     borderWidth: 1.5,
-    borderColor: '#ddd',
-    borderRadius: 8,
+    borderColor: colors.borderLight,
+    borderRadius: 4,
     padding: 10,
-    fontSize: 14,
+    fontSize: 13,
+    color: colors.inkCharcoal,
     minHeight: 70,
-    textAlignVertical: 'top',
   },
   btnRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 12,
+    gap: 10,
   },
   cancelBtn: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#f0f2f5',
+    paddingVertical: 11,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.backgroundAlt,
   },
   cancelBtnText: {
-    color: '#555',
-    fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
   confirmBtn: {
     paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#27ae60',
+    paddingVertical: 11,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
+    backgroundColor: colors.bananaGreen,
+    alignItems: 'center',
   },
   disabledBtn: {
     opacity: 0.6,
   },
   confirmBtnText: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.textInverse,
+    letterSpacing: 0.3,
   },
 });
