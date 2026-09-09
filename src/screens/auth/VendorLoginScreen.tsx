@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../navigation/AuthStack';
 import { useAuthStore } from '../../store/authStore';
+import { colors, radius, spacing, typography } from '../../theme';
 
 export const VendorLoginScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
@@ -33,69 +34,87 @@ export const VendorLoginScreen: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-            >
-              <Text style={styles.backButtonText}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Vendor Portal</Text>
-            <Text style={styles.headerSubtitle}>
-              Enter your Vendor ID to manage batches & view demand forecasts
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            {error ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{error}</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.container}>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.backButton}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.backButtonText}>← Portals</Text>
+              </TouchableOpacity>
+              <View style={styles.badgeRow}>
+                <View style={styles.tagBadge}>
+                  <Text style={styles.tagBadgeText}>RETAIL PARTNER</Text>
+                </View>
               </View>
-            ) : null}
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Vendor ID</Text>
-              <TextInput
-                style={styles.input}
-                value={vendorId}
-                onChangeText={(val) => {
-                  setVendorId(val);
-                  if (error) clearError();
-                }}
-                placeholder="e.g. V100"
-                placeholderTextColor="#999"
-                autoCapitalize="characters"
-                autoCorrect={false}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
-              onPress={handleLogin}
-              disabled={isLoading}
-              activeOpacity={0.8}
-            >
-              {isLoading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.loginBtnText}>Sign In as Vendor</Text>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.hintBox}>
-              <Text style={styles.hintText}>Sample Vendor IDs:</Text>
-              <Text style={styles.hintCode}>V100 • V101 • V102 • V103 • V104</Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => navigation.navigate('AdminLogin')}
-              style={styles.switchButton}
-            >
-              <Text style={styles.switchText}>
-                Are you an administrator? <Text style={styles.switchTextBold}>Sign in here →</Text>
+              <Text style={styles.headerTitle}>Vendor Sign In</Text>
+              <Text style={styles.headerSubtitle}>
+                Manage batch deliveries, confirm store intake & view AI demand forecasts
               </Text>
-            </TouchableOpacity>
+            </View>
+
+            {/* Ledger Login Card */}
+            <View style={styles.card}>
+              {error ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Vendor Identification Code</Text>
+                <TextInput
+                  style={styles.input}
+                  value={vendorId}
+                  onChangeText={(val) => {
+                    setVendorId(val);
+                    if (error) clearError();
+                  }}
+                  placeholder="e.g. V100"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
+                onPress={handleLogin}
+                disabled={isLoading}
+                activeOpacity={0.85}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color={colors.textInverse} />
+                ) : (
+                  <Text style={styles.loginBtnText}>Sign In as Vendor →</Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Sample Hint Box */}
+              <View style={styles.hintBox}>
+                <Text style={styles.hintText}>Active Retail Partner IDs:</Text>
+                <Text style={styles.hintCode}>V100 (Lakshmi Idli) • V101 • V102 • V104</Text>
+              </View>
+
+              {/* Link to Admin */}
+              <TouchableOpacity
+                onPress={() => navigation.navigate('AdminLogin')}
+                style={styles.switchButton}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.switchText}>
+                  Kitchen manager or administrator?{' '}
+                  <Text style={styles.switchTextBold}>Sign in here →</Text>
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -106,123 +125,164 @@ export const VendorLoginScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.background,
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 24,
+    padding: spacing.lg,
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  container: {
+    width: '100%',
+    maxWidth: 480,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: spacing.lg,
   },
   backButton: {
-    marginBottom: 16,
+    alignSelf: 'flex-start',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    marginBottom: spacing.md,
   },
   backButtonText: {
-    color: '#4ecca3',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.clayTerracotta,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    marginBottom: spacing.xs,
+  },
+  tagBadge: {
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+  },
+  tagBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.clayTerracotta,
+    letterSpacing: 0.8,
   },
   headerTitle: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#ffffff',
+    color: colors.textPrimary,
+    fontFamily: typography.heading,
+    marginTop: spacing.xs,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    color: colors.textSecondary,
     marginTop: 6,
+    lineHeight: 18,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 5,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    borderWidth: 1.5,
+    borderTopWidth: 3.5,
+    borderColor: colors.borderStrong,
   },
   errorBox: {
-    backgroundColor: '#fce4ec',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: colors.dangerBg,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.rustRed,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
   errorText: {
-    color: '#c62828',
+    color: colors.rustRed,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     textAlign: 'center',
   },
   formGroup: {
-    marginBottom: 18,
+    marginBottom: spacing.md,
   },
   label: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#555',
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.inkCharcoal,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 6,
+    marginBottom: spacing.xs,
   },
   input: {
-    backgroundColor: '#fafafa',
+    backgroundColor: colors.surfaceElevated,
     borderWidth: 1.5,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    paddingHorizontal: 14,
+    borderColor: colors.borderLight,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
     paddingVertical: 12,
-    fontSize: 16,
-    color: '#1a1a2e',
-    fontWeight: '600',
+    fontSize: 15,
+    color: colors.inkCharcoal,
+    fontWeight: '700',
+    fontFamily: typography.mono,
   },
   loginBtn: {
-    backgroundColor: '#4ecca3',
-    borderRadius: 10,
+    backgroundColor: colors.clayTerracotta,
+    borderRadius: radius.sm,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 8,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
+    marginTop: spacing.xs,
   },
   loginBtnDisabled: {
     opacity: 0.6,
   },
   loginBtnText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700',
+    color: colors.textInverse,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   hintBox: {
-    marginTop: 20,
-    padding: 12,
-    backgroundColor: '#f0f2f5',
-    borderRadius: 8,
+    marginTop: spacing.md,
+    padding: spacing.sm + 2,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
     alignItems: 'center',
   },
   hintText: {
     fontSize: 11,
-    color: '#777',
+    fontWeight: '600',
+    color: colors.textSecondary,
   },
   hintCode: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#333',
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.inkCharcoal,
+    fontFamily: typography.mono,
     marginTop: 2,
   },
   switchButton: {
-    marginTop: 20,
+    marginTop: spacing.md,
     alignItems: 'center',
   },
   switchText: {
-    fontSize: 13,
-    color: '#666',
+    fontSize: 12,
+    color: colors.textSecondary,
   },
   switchTextBold: {
-    color: '#4ecca3',
-    fontWeight: '700',
+    color: colors.clayTerracotta,
+    fontWeight: '800',
   },
 });

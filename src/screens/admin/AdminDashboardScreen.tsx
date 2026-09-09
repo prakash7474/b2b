@@ -248,30 +248,36 @@ export const AdminDashboardScreen: React.FC = () => {
                 <Text style={styles.widgetHeading}>7-Day Fleet Demand</Text>
                 <Text style={styles.widgetSub}>Predicted vs Actual (kg)</Text>
                 <View style={styles.chartBars}>
-                  {demandTrends.map((d: any, idx: number) => {
-                    const maxVal = 75;
-                    const predH = Math.min(100, (d.predicted / maxVal) * 60);
-                    const actH = Math.min(100, (d.actual / maxVal) * 60);
-                    return (
-                      <View key={idx} style={styles.chartCol}>
-                        <View style={styles.barPair}>
-                          <View
-                            style={[
-                              styles.predBar,
-                              { height: Math.max(8, predH) },
-                            ]}
-                          />
-                          <View
-                            style={[
-                              styles.actBar,
-                              { height: Math.max(8, actH) },
-                            ]}
-                          />
-                        </View>
-                        <Text style={styles.chartDayText}>{d.day}</Text>
-                      </View>
+                  {(() => {
+                    const maxVal = Math.max(
+                      1,
+                      ...demandTrends.map((d: any) => Math.max(Number(d.predicted) || 0, Number(d.actual) || 0, 40))
                     );
-                  })}
+                    const MAX_BAR_HEIGHT = 44;
+                    return demandTrends.map((d: any, idx: number) => {
+                      const predH = Math.max(4, Math.round(((Number(d.predicted) || 0) / maxVal) * MAX_BAR_HEIGHT));
+                      const actH = Math.max(4, Math.round(((Number(d.actual) || 0) / maxVal) * MAX_BAR_HEIGHT));
+                      return (
+                        <View key={idx} style={styles.chartCol}>
+                          <View style={styles.barPair}>
+                            <View
+                              style={[
+                                styles.predBar,
+                                { height: predH },
+                              ]}
+                            />
+                            <View
+                              style={[
+                                styles.actBar,
+                                { height: actH },
+                              ]}
+                            />
+                          </View>
+                          <Text style={styles.chartDayText}>{d.day}</Text>
+                        </View>
+                      );
+                    });
+                  })()}
                 </View>
                 <View style={styles.legendRow}>
                   <View style={styles.legendItem}>
@@ -559,16 +565,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     height: 75,
-    paddingVertical: 4,
+    paddingTop: 4,
+    paddingBottom: 2,
+    marginTop: 6,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderLight,
   },
   chartCol: {
     alignItems: 'center',
+    justifyContent: 'flex-end',
   },
   barPair: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    height: 48,
     gap: 2,
   },
   predBar: {
