@@ -89,13 +89,27 @@ export const VendorHomeScreen: React.FC = () => {
   };
 
   const currentStock = inventorySummary?.totalQuantityKg ?? vendorForecast?.availableStock ?? 0;
+  const isStockOut = currentStock <= 0;
   const predictedDemand = vendorForecast?.predictedDemand ?? 15.0;
   const recommendedDispatch = vendorForecast?.recommendedDispatch ?? Math.max(0, Math.round((predictedDemand - currentStock) * 10) / 10);
   const isRestockNeeded = currentStock < predictedDemand;
 
-  const riskLabel = spoilageResult?.riskLabel || 'Low';
-  const riskColor = riskLabel === 'High' ? colors.rustRed : riskLabel === 'Medium' ? colors.turmericGold : colors.bananaGreen;
-  const riskBg = riskLabel === 'High' ? colors.dangerBg : riskLabel === 'Medium' ? colors.warningBg : colors.successBg;
+  const isSpoilageStockOut = isStockOut || !!spoilageResult?.isStockOut || spoilageResult?.riskLabel === 'None';
+  const riskLabel = isSpoilageStockOut ? 'None' : (spoilageResult?.riskLabel || 'Low');
+  const riskColor = isSpoilageStockOut
+    ? colors.rustRed
+    : riskLabel === 'High'
+    ? colors.rustRed
+    : riskLabel === 'Medium'
+    ? colors.turmericGold
+    : colors.bananaGreen;
+  const riskBg = isSpoilageStockOut
+    ? colors.dangerBg
+    : riskLabel === 'High'
+    ? colors.dangerBg
+    : riskLabel === 'Medium'
+    ? colors.warningBg
+    : colors.successBg;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -166,10 +180,12 @@ export const VendorHomeScreen: React.FC = () => {
               </View>
 
               {/* Status Banner */}
-              <View style={[styles.statusBanner, isRestockNeeded ? styles.statusBannerAlert : styles.statusBannerAdequate]}>
-                <Text style={styles.statusBannerGlyph}>{isRestockNeeded ? '▲' : '✓'}</Text>
-                <Text style={[styles.statusBannerText, { color: isRestockNeeded ? colors.rustRed : colors.bananaGreen }]}>
-                  {isRestockNeeded
+              <View style={[styles.statusBanner, isStockOut ? styles.statusBannerAlert : (isRestockNeeded ? styles.statusBannerAlert : styles.statusBannerAdequate)]}>
+                <Text style={styles.statusBannerGlyph}>{isStockOut ? '!' : (isRestockNeeded ? '▲' : '✓')}</Text>
+                <Text style={[styles.statusBannerText, { color: isStockOut || isRestockNeeded ? colors.rustRed : colors.bananaGreen }]}>
+                  {isStockOut
+                    ? `STOCK OUT: Store has 0 kg batter in hand (predicted demand: ${predictedDemand} kg). Immediate requisition required.`
+                    : isRestockNeeded
                     ? `Current stock (${currentStock} kg) is below predicted demand (${predictedDemand} kg). Requisition advised.`
                     : `Stock in hand (${currentStock} kg) is sufficient for today's forecast demand.`}
                 </Text>
@@ -227,26 +243,34 @@ export const VendorHomeScreen: React.FC = () => {
                   <Text style={styles.cardTitle}>Batter Freshness & Spoilage Health</Text>
                 </View>
                 <View style={[styles.riskChip, { backgroundColor: riskBg, borderColor: riskColor }]}>
-                  <Text style={[styles.riskChipText, { color: riskColor }]}>{riskLabel.toUpperCase()} RISK</Text>
+                  <Text style={[styles.riskChipText, { color: riskColor }]}>
+                    {isSpoilageStockOut ? 'STOCK OUT' : `${riskLabel.toUpperCase()} RISK`}
+                  </Text>
                 </View>
               </View>
 
               <View style={styles.spoilageRow}>
                 <View style={styles.spoilageMetric}>
-                  <Text style={styles.spoilageVal}>{spoilageResult?.hoursSinceManufacture ?? 4.0} hrs</Text>
+                  <Text style={styles.spoilageVal}>
+                    {isSpoilageStockOut ? '—' : `${spoilageResult?.hoursSinceManufacture ?? 4.0} hrs`}
+                  </Text>
                   <Text style={styles.spoilageLbl}>Hours Since Milling</Text>
                 </View>
                 <View style={styles.verticalDivider} />
                 <View style={styles.spoilageMetric}>
-                  <Text style={[styles.spoilageVal, { color: colors.clayTerracotta }]}>
-                    ~{spoilageResult?.hoursToExpiry ?? 24.0} hrs
+                  <Text style={[styles.spoilageVal, { color: isSpoilageStockOut ? colors.textSecondary : colors.clayTerracotta }]}>
+                    {isSpoilageStockOut ? '0 hrs' : `~${spoilageResult?.hoursToExpiry ?? 24.0} hrs`}
                   </Text>
                   <Text style={styles.spoilageLbl}>Safe Shelf Life Remaining</Text>
                 </View>
                 <View style={styles.verticalDivider} />
                 <View style={styles.spoilageMetric}>
-                  <Text style={styles.spoilageVal}>{Math.round(spoilageResult?.confidence ?? 90)}%</Text>
-                  <Text style={styles.spoilageLbl}>Classifier Confidence</Text>
+                  <Text style={styles.spoilageVal}>
+                    {isSpoilageStockOut ? 'Depleted' : `${Math.round(spoilageResult?.confidence ?? 90)}%`}
+                  </Text>
+                  <Text style={styles.spoilageLbl}>
+                    {isSpoilageStockOut ? 'Inventory Status' : 'Classifier Confidence'}
+                  </Text>
                 </View>
               </View>
 
@@ -254,20 +278,31 @@ export const VendorHomeScreen: React.FC = () => {
               <View style={[styles.adviceBox, { borderColor: riskColor }]}>
                 <Text style={styles.adviceTitle}>Biochemical Guidance & Dispensing Advice</Text>
                 <Text style={styles.adviceText}>
-                  {riskLabel === 'High'
-                    ? 'High biochemical spoilage risk detected in current stock. Recommend immediate clearance, discounting, or informing central kitchen.'
+                  {isSpoilageStockOut
+                    ? 'Store inventory is completely depleted (Stock Out). Spoilage risk evaluation is inactive until fresh batter is received. Submit a restock requisition to resume store sales.'
+                    : riskLabel === 'High'
+                    ? 'High biochemical spoilage risk detected in current stock. Recommend immediate clearance, discounting, or marking as Stock Out.'
                     : riskLabel === 'Medium'
                     ? 'Moderate fermentation age. Recommend prioritizing morning counter dispensing and maintaining cold temperature below 5°C.'
                     : 'Batter is biochemically fresh with optimal acidity profile. Safe for normal sales velocity throughout the day.'}
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={styles.secondaryBtn}
-                onPress={() => navigation.navigate('My Batches')}
-              >
-                <Text style={styles.secondaryBtnText}>Inspect Specific Batches & Health →</Text>
-              </TouchableOpacity>
+              {isSpoilageStockOut ? (
+                <TouchableOpacity
+                  style={styles.secondaryBtn}
+                  onPress={() => setRestockModalVisible(true)}
+                >
+                  <Text style={styles.secondaryBtnText}>Request Fresh Batter Restock →</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.secondaryBtn}
+                  onPress={() => navigation.navigate('My Batches')}
+                >
+                  <Text style={styles.secondaryBtnText}>Inspect Specific Batches & Health →</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* ═══════════════════════════════════════════════════════ */}
@@ -281,13 +316,13 @@ export const VendorHomeScreen: React.FC = () => {
                 </View>
                 <View style={[
                   styles.stockBadge,
-                  inventorySummary?.belowMinimum ? styles.stockBadgeLow : styles.stockBadgeOk,
+                  isStockOut ? styles.stockBadgeLow : (inventorySummary?.belowMinimum ? styles.stockBadgeLow : styles.stockBadgeOk),
                 ]}>
                   <Text style={[
                     styles.stockBadgeText,
-                    { color: inventorySummary?.belowMinimum ? colors.rustRed : colors.bananaGreen },
+                    { color: isStockOut || inventorySummary?.belowMinimum ? colors.rustRed : colors.bananaGreen },
                   ]}>
-                    {inventorySummary?.belowMinimum ? 'BELOW MINIMUM' : 'STOCK ADEQUATE'}
+                    {isStockOut ? 'OUT OF STOCK' : (inventorySummary?.belowMinimum ? 'BELOW MINIMUM' : 'STOCK ADEQUATE')}
                   </Text>
                 </View>
               </View>
@@ -310,15 +345,17 @@ export const VendorHomeScreen: React.FC = () => {
                 <View style={styles.verticalDivider} />
                 <View style={styles.invItem}>
                   <Text style={[styles.invVal, { color: colors.bananaGreen }]}>
-                    {inventorySummary?.receivedBatchCount ?? 0}
+                    {isStockOut ? 0 : (inventorySummary?.receivedBatchCount ?? 0)}
                   </Text>
-                  <Text style={styles.invLbl}>Batches Received</Text>
+                  <Text style={styles.invLbl}>Batches in Store</Text>
                 </View>
               </View>
 
               <View style={styles.logSummaryRow}>
                 <Text style={styles.logSummaryText}>
-                  Oldest batch in store: {inventorySummary?.oldestBatchAgeHrs ? `${inventorySummary.oldestBatchAgeHrs} hrs ago` : 'Fresh delivery'} • Freshness score: {Math.round((inventorySummary?.freshnessScore ?? 0.85) * 100)}%
+                  {isStockOut || (inventorySummary?.receivedBatchCount ?? 0) === 0
+                    ? 'No active batches currently in store • Store inventory depleted'
+                    : `Oldest batch in store: ${inventorySummary?.oldestBatchAgeHrs ? `${inventorySummary.oldestBatchAgeHrs} hrs ago` : 'Fresh delivery'} • Freshness score: ${Math.round((inventorySummary?.freshnessScore ?? 0.85) * 100)}%`}
                 </Text>
               </View>
 

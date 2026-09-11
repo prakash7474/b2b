@@ -18,6 +18,7 @@ interface BatchState {
   addBatch: (data: CreateBatchInput) => Promise<boolean>;
   assignBatch: (batchId: string, vendorId: string) => Promise<boolean>;
   receiveBatch: (batchId: string, notes?: string) => Promise<boolean>;
+  stockoutBatch: (batchId: string) => Promise<boolean>;
   removeBatch: (batchId: string) => Promise<boolean>;
 }
 
@@ -94,6 +95,20 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       return true;
     } catch (err: any) {
       const msg = err.response?.data?.error || 'Failed to confirm receipt';
+      set({ error: msg, isLoading: false });
+      return false;
+    }
+  },
+
+  stockoutBatch: async (batchId: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      await batchService.stockoutBatch(batchId);
+      await get().fetchBatches();
+      await get().fetchInventory();
+      return true;
+    } catch (err: any) {
+      const msg = err.response?.data?.error || 'Failed to mark batch as stock out';
       set({ error: msg, isLoading: false });
       return false;
     }

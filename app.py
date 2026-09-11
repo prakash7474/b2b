@@ -1255,6 +1255,73 @@ def delete_batch(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/batches/<batch_id>/stockout", methods=["POST", "PUT", "PATCH"])
+def mark_batch_stockout(batch_id):
+    """Vendor or admin marks batch as stock out / depleted, removing it from active store inventory."""
+    try:
+        batch = COLS["batches"].find_one({"batch_id": batch_id})
+        if not batch:
+            return jsonify({"error": "Batch not found"}), 404
+
+        now = datetime.utcnow()
+        vendor_id = batch.get("vendor_id", "")
+        product_name = batch.get("product_name", "Idli Batter")
+        product_id = PRODUCT_NAME_TO_ID.get(product_name, product_name)
+        volume = float(batch.get("volume_kg", batch.get("quantity_kg", 0.0)))
+
+        # Update batch status in batches collection
+        COLS["batches"].update_one(
+            {"batch_id": batch_id},
+            {"$set": {
+                "status": "stockout",
+                "stocked_out_at": now,
+                "remaining_volume_kg": 0.0,
+            }}
+        )
+
+        # Update vendor active inventory in inventory collection
+        if vendor_id:
+            inv = COLS["inventory"].find_one({"vendor_id": vendor_id})
+            prev_qty = float(inv.get("quantity", 0.0)) if inv else 0.0
+            new_qty = max(0.0, round(prev_qty - volume, 1))
+            if inv:
+                COLS["inventory"].update_one(
+                    {"vendor_id": vendor_id},
+                    {"$set": {"quantity": new_qty, "last_updated": now}}
+                )
+
+            # Record inventory movement
+            write_movement(
+                vendor_id=vendor_id,
+                product_id=product_id,
+                movement_type="stockout",
+                quantity=-volume,
+                batch_id=batch_id,
+                triggered_by="vendor",
+                previous_qty=prev_qty,
+                new_qty=new_qty,
+                notes=f"Batch #{batch_id} marked as Stock Out / Depleted"
+            )
+
+        vendor = COLS["vendors"].find_one({"vendor_id": vendor_id}) if vendor_id else None
+        shop_name = vendor.get("shop_name", vendor_id) if vendor else "Vendor"
+        log_event(
+            "activity", "info", shop_name,
+            f"Batch #{batch_id} marked as Stock Out (removed from active store) at {shop_name}",
+            {"type": "batch", "id": batch_id, "name": batch_id}
+        )
+
+        return jsonify({
+            "ok": True,
+            "batch_id": batch_id,
+            "status": "stockout",
+            "message": f"Batch #{batch_id} marked as Stock Out and removed from store page"
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/batches/<batch_id>/report-issue", methods=["POST"])
 def report_batch_issue(batch_id):
     """Vendor flags an issue with an assigned/received batch."""
@@ -1324,16 +1391,16 @@ def get_inventory_summary():
         min_stock = 10.0
 
     freshness_scores = [float(i.get("freshnessScore") or i.get("freshness_score", 0.8)) for i in inv_items]
-    avg_freshness = round(sum(freshness_scores) / len(freshness_scores), 2) if freshness_scores else 0.85
+    avg_freshness = round(sum(freshness_scores) / len(freshness_scores), 2) if (freshness_scores and total_qty > 0) else 0.0
 
     batches = list(COLS["batches"].find({"vendor_id": vendor_id}))
     batch_count = len(batches)
     received_batches = [b for b in batches if b.get("status") == "received"]
-    received_batch_count = len(received_batches)
+    received_batch_count = len(received_batches) if total_qty > 0 else 0
 
     now = datetime.utcnow()
     oldest_batch_age_hrs = 0.0
-    if received_batches:
+    if received_batches and total_qty > 0:
         ages = []
         for b in received_batches:
             mfg = b.get("mfgTimestamp") or b.get("mfg_timestamp") or b.get("received_at") or b.get("created_at")
@@ -1351,6 +1418,7 @@ def get_inventory_summary():
         "totalQuantityKg": round(total_qty, 1),
         "minimumStockKg": round(min_stock, 1),
         "belowMinimum": total_qty < min_stock,
+        "isStockOut": total_qty <= 0,
         "batchCount": batch_count,
         "receivedBatchCount": received_batch_count,
         "oldestBatchAgeHrs": oldest_batch_age_hrs,
@@ -1420,10 +1488,17 @@ def mutate_inventory():
                 other_ids = [i["_id"] for i in inv_items[1:]]
                 COLS["inventory"].delete_many({"_id": {"$in": other_ids}})
 
+        # If stock is completely depleted, transition active received batches to stockout
+        if target_qty == 0:
+            COLS["batches"].update_many(
+                {"vendor_id": vendor_id, "status": "received"},
+                {"$set": {"status": "stockout", "stocked_out_at": now, "remaining_volume_kg": 0.0}}
+            )
+
         # Phase C: write inventory_movement event
         write_movement(
             vendor_id=vendor_id, product_id=product_id,
-            movement_type=mv_type, quantity=mv_qty,
+            movement_type=mv_type if target_qty > 0 else "stockout", quantity=mv_qty,
             triggered_by="admin",
             previous_qty=current_total, new_qty=target_qty,
             notes=log_msg
@@ -1907,53 +1982,57 @@ def predict_spoilage_for_vendor(vendor_id):
 
     now = datetime.utcnow()
     
-    # Check vendor's active batch or inventory
-    active_batch = COLS["batches"].find_one(
-        {"vendor_id": vendor_id, "status": {"$in": ["assigned", "received"]}},
-        sort=[("created_at", DESCENDING)]
-    )
-    inv_item = COLS["inventory"].find_one({"vendor_id": vendor_id})
-
     # Vendor storage parameters
     has_fridge = 1 if vendor.get("hasRefrigerator") else 0
     fridge_temp = float(vendor.get("fridgeTemperatureC", 4.0)) if has_fridge else -1.0
     storage_type = vendor.get("storageType", "counter")
     vendor_rating = float(vendor.get("rating", 4.0))
 
-    if active_batch:
-        mfg = active_batch.get("mfgTimestamp") or active_batch.get("mfg_timestamp") or active_batch.get("created_at") or now
-        if isinstance(mfg, str):
-            mfg = parse_date(mfg)
-        hours_since_mfg = max(0.5, (now - mfg).total_seconds() / 3600.0)
-        initial_ph = float(active_batch.get("initialPH", 4.4))
-        ambient_temp = float(active_batch.get("temperatureC", 30.0))
-        humidity = float(active_batch.get("humidityPct", 60.0))
-        volume = float(active_batch.get("volume_kg", 15.0))
-        batch_id = active_batch.get("batch_id")
-    elif inv_item:
-        rec = inv_item.get("receivedAt") or inv_item.get("received_at") or inv_item.get("manufactureDate") or now
-        if isinstance(rec, str):
-            rec = parse_date(rec)
-        hours_since_mfg = max(1.0, (now - rec).total_seconds() / 3600.0)
-        initial_ph = 4.4
-        ambient_temp = 30.0
-        humidity = 60.0
-        volume = float(inv_item.get("quantity", 10.0))
-        batch_id = inv_item.get("batch_number", "INV_STOCK")
+    inv_item = COLS["inventory"].find_one({"vendor_id": vendor_id})
+    inv_qty = float(inv_item.get("quantity", 0.0)) if inv_item else 0.0
 
-    else:
-        # Default fresh baseline if no stock currently
-        hours_since_mfg = 4.0
-        initial_ph = 4.4
-        ambient_temp = 30.0
-        humidity = 60.0
-        volume = 15.0
-        batch_id = "N/A"
+    # Only look for active received batches in store (NOT assigned or stocked out)
+    active_batch = COLS["batches"].find_one(
+        {"vendor_id": vendor_id, "status": "received"},
+        sort=[("received_at", DESCENDING), ("created_at", DESCENDING)]
+    )
+
+    # If vendor has zero stock or no active batch in store, stock is out!
+    if inv_qty <= 0 or not active_batch:
+        return jsonify({
+            "vendorId": vendor_id,
+            "shopName": vendor.get("shop_name", ""),
+            "batchId": "N/A",
+            "hasRefrigerator": bool(has_fridge),
+            "storageType": storage_type,
+            "fridgeTemperatureC": fridge_temp,
+            "riskLabel": "None",
+            "isStockOut": True,
+            "confidence": 100.0,
+            "riskScore": 0.0,
+            "freshnessScore": 0.0,
+            "hoursSinceManufacture": 0.0,
+            "hoursToExpiry": 0.0,
+            "probabilities": {"High": 0.0, "Medium": 0.0, "Low": 0.0},
+            "statusMessage": "Stock Out: No active batter stock in store",
+            "dataSource": "Inventory Telemetry (Stock Depleted)",
+        })
+
+    mfg = active_batch.get("mfgTimestamp") or active_batch.get("mfg_timestamp") or active_batch.get("created_at") or now
+    if isinstance(mfg, str):
+        mfg = parse_date(mfg)
+    hours_since_mfg = max(0.5, (now - mfg).total_seconds() / 3600.0)
+    initial_ph = float(active_batch.get("initialPH", 4.4))
+    ambient_temp = float(active_batch.get("temperatureC", 30.0))
+    humidity = float(active_batch.get("humidityPct", 60.0))
+    volume = float(active_batch.get("volume_kg", inv_qty))
+    batch_id = active_batch.get("batch_id")
 
     hours_on_shelf = hours_since_mfg * 0.7
     sell_through = 0.5
     temp_exposure = (fridge_temp if has_fridge else ambient_temp) * hours_since_mfg
-    hours_to_expiry = max(0.0, 36.0 - hours_since_mfg) if not has_fridge else max(0.0, 96.0 - hours_since_mfg)
+    max_shelf_life = 96.0 if has_fridge else 36.0
+    hours_to_expiry = max(0.0, round(max_shelf_life - hours_since_mfg, 1))
 
     feature_dict = {
         "initialPH": initial_ph,
@@ -1984,6 +2063,8 @@ def predict_spoilage_for_vendor(vendor_id):
     
     # Calculate composite score (0 to 1)
     composite_risk = round((high_prob * 0.9) + (med_prob * 0.5) + (low_prob * 0.15), 2)
+    # Freshness is inverse of spoilage risk
+    freshness_score = max(0.0, min(1.0, round(1.0 - composite_risk, 2)))
     
     return jsonify({
         "vendorId": vendor_id,
@@ -1993,13 +2074,16 @@ def predict_spoilage_for_vendor(vendor_id):
         "storageType": storage_type,
         "fridgeTemperatureC": fridge_temp,
         "riskLabel": risk_label,
+        "isStockOut": False,
         "confidence": confidence,
         "riskScore": composite_risk,
+        "freshnessScore": freshness_score,
         "hoursSinceManufacture": round(hours_since_mfg, 1),
         "hoursToExpiry": round(hours_to_expiry, 1),
         "probabilities": {k: round(v * 100, 1) for k, v in risk_map.items()},
         "dataSource": "ML Model (Random Forest) + Live Vendor Batch Telemetry",
     })
+
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2262,6 +2346,34 @@ def predict_spoilage_for_batch(batch_id):
     vendor = COLS["vendors"].find_one({"vendor_id": batch.get("vendor_id")})
     now = datetime.utcnow()
 
+    # If batch is marked stockout / depleted
+    if batch.get("status") == "stockout":
+        return jsonify({
+            "batchId": batch_id,
+            "batch_id": batch_id,
+            "productId": batch.get("product_name", "Idli Batter"),
+            "product_name": batch.get("product_name", "Idli Batter"),
+            "vendorId": batch.get("vendor_id", ""),
+            "vendor_id": batch.get("vendor_id", ""),
+            "vendorName": vendor.get("shop_name", "") if vendor else "",
+            "vendor_name": vendor.get("shop_name", "") if vendor else "",
+            "riskLabel": "None",
+            "mlRiskLabel": "None",
+            "isStockOut": True,
+            "confidence": 100.0,
+            "mlConfidence": 100.0,
+            "riskScore": 0.0,
+            "freshnessScore": 0.0,
+            "freshnessRisk": "Stock Out",
+            "probabilities": {"High": 0.0, "Medium": 0.0, "Low": 0.0},
+            "mlProbabilities": {"High": 0.0, "Medium": 0.0, "Low": 0.0},
+            "hoursSinceManufacture": 0.0,
+            "hoursToExpiry": 0.0,
+            "sellThroughRate": 0.0,
+            "statusMessage": "Batch is stocked out / depleted and removed from store",
+            "dataSource": "Inventory Telemetry (Stock Depleted)",
+        })
+
     # ── Hours since manufacture (from BATCHES.mfgTimestamp) ──
     mfg = batch.get("mfgTimestamp") or batch.get("mfg_timestamp") or now
     if isinstance(mfg, str):
@@ -2285,14 +2397,9 @@ def predict_spoilage_for_batch(batch_id):
             received = parse_date(received)
         hours_on_shelf = max(0, (now - received).total_seconds() / 3600)
 
-    # ── Hours to expiry (from INVENTORY.expiryAt) ──
-    hours_to_expiry = max(0, 24 - hours_since_mfg)  # default
-    expiry_field = inv_item.get("expiryAt") or inv_item.get("expiry_date") if inv_item else None
-    if expiry_field:
-        expiry = expiry_field
-        if isinstance(expiry, str):
-            expiry = parse_date(expiry)
-        hours_to_expiry = max(0, (expiry - now).total_seconds() / 3600)
+    # ── Hours to expiry ──
+    max_shelf_life = 96.0 if has_fridge else 36.0
+    hours_to_expiry = max(0.0, round(max_shelf_life - hours_since_mfg, 1))
 
     # ── Sell-through rate: prefer inventory_movement if available ──
     vendor_id = batch.get("vendor_id", "")
@@ -2347,6 +2454,8 @@ def predict_spoilage_for_batch(batch_id):
 
     # Calculate composite score (0 to 1) directly from ML model probabilities
     composite_risk = round((high_prob * 0.9) + (med_prob * 0.5) + (low_prob * 0.15), 2)
+    # Freshness score is the inverse of risk score (0 to 1)
+    freshness_score = max(0.0, min(1.0, round(1.0 - composite_risk, 2)))
 
     # Phase D: Persist prediction with numericValue + feature snapshot
     try:
@@ -2396,10 +2505,11 @@ def predict_spoilage_for_batch(batch_id):
         "vendor_name": vendor.get("shop_name", "") if vendor else "",
         "riskLabel": risk_label,
         "mlRiskLabel": risk_label,
+        "isStockOut": False,
         "confidence": confidence,
         "mlConfidence": confidence,
         "riskScore": composite_risk,
-        "freshnessScore": composite_risk,
+        "freshnessScore": freshness_score,
         "freshnessRisk": risk_label,
         "probabilities": {label_encoder.classes_[i]: round(float(p) * 100, 1) for i, p in enumerate(proba)},
         "mlProbabilities": {label_encoder.classes_[i]: round(float(p) * 100, 1) for i, p in enumerate(proba)},

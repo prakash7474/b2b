@@ -34,6 +34,12 @@ export const BatchStatusBadge: React.FC<BatchStatusBadgeProps> = ({ status }) =>
     textColor = colors.statusFresh;
     dotColor = colors.statusFresh;
     label = 'Received';
+  } else if (normalized === 'stockout' || normalized === 'stocked_out' || normalized === 'depleted') {
+    bg = colors.dangerBg;
+    borderColor = colors.rustRed;
+    textColor = colors.rustRed;
+    dotColor = colors.rustRed;
+    label = 'Stock Out';
   }
 
   return (

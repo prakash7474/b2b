@@ -8,6 +8,7 @@ import {
   RefreshControl,
   SafeAreaView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import { useBatchStore } from '../../store/batchStore';
@@ -21,10 +22,10 @@ import { colors, typography } from '../../theme';
 
 export const VendorBatchListScreen: React.FC = () => {
   const { vendor_id } = useAuthStore();
-  const { batches, fetchBatches, isLoading } = useBatchStore();
+  const { batches, fetchBatches, stockoutBatch, isLoading } = useBatchStore();
   const { fetchBatchSpoilage, batchSpoilage } = usePredictionStore();
 
-  const [filter, setFilter] = useState<'all' | 'assigned' | 'received'>('all');
+  const [filter, setFilter] = useState<'all' | 'assigned' | 'received' | 'stockout'>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [receiveBatchTarget, setReceiveBatchTarget] = useState<Batch | null>(null);
   const [reportIssueTarget, setReportIssueTarget] = useState<Batch | null>(null);
@@ -57,6 +58,32 @@ export const VendorBatchListScreen: React.FC = () => {
     } finally {
       setSpoilageLoading(false);
     }
+  };
+
+  const handleStockoutConfirm = (batch: Batch) => {
+    Alert.alert(
+      'Confirm Stock Out',
+      `Mark Batch #${batch.batch_id} (${batch.product_name}) as Stock Out?\n\nThis will record the batch as depleted and remove it from your active In Store page.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes, Stock Out',
+          style: 'destructive',
+          onPress: async () => {
+            const ok = await stockoutBatch(batch.batch_id);
+            if (ok) {
+              Alert.alert(
+                'Stock Out Recorded',
+                `Batch #${batch.batch_id} marked as Stock Out and removed from the In Store page.`
+              );
+              await loadData();
+            } else {
+              Alert.alert('Error', 'Failed to update batch status.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const vendorBatches = batches.filter((b) => {
@@ -139,12 +166,27 @@ export const VendorBatchListScreen: React.FC = () => {
           )}
 
           {isReceived && (
-            <TouchableOpacity
-              style={styles.spoilageBtn}
-              onPress={() => handleCheckSpoilage(item)}
-            >
-              <Text style={styles.spoilageBtnText}>Check Spoilage Risk & Action →</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={styles.spoilageBtn}
+                onPress={() => handleCheckSpoilage(item)}
+              >
+                <Text style={styles.spoilageBtnText}>Check Spoilage Risk & Action →</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.stockoutBtn}
+                onPress={() => handleStockoutConfirm(item)}
+              >
+                <Text style={styles.stockoutBtnText}>✕ Mark Stock Out (Remove)</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {item.status === 'stockout' && (
+            <View style={styles.stockoutBadgeBox}>
+              <Text style={styles.stockoutBadgeText}>✓ Stock Out — Depleted & removed from store</Text>
+            </View>
           )}
 
           <TouchableOpacity
@@ -163,13 +205,13 @@ export const VendorBatchListScreen: React.FC = () => {
       <View style={styles.topBar}>
         <Text style={styles.title}>Assigned & Received Batches</Text>
         <Text style={styles.subtitle}>
-          Track incoming dispatch batches, confirm store delivery, inspect spoilage risks, and log incidents.
+          Track incoming dispatch batches, confirm store delivery, inspect spoilage risks, and remove depleted batches upon stock out.
         </Text>
       </View>
 
       {/* Filter Chips Bar */}
       <View style={styles.filterRow}>
-        {(['all', 'assigned', 'received'] as const).map((tab) => {
+        {(['all', 'assigned', 'received', 'stockout'] as const).map((tab) => {
           const isSelected = filter === tab;
           return (
             <TouchableOpacity
@@ -182,7 +224,9 @@ export const VendorBatchListScreen: React.FC = () => {
                   ? `All (${batches.length})`
                   : tab === 'assigned'
                   ? `Awaiting Receipt (${batches.filter((b) => b.status === 'assigned').length})`
-                  : `In Store (${batches.filter((b) => b.status === 'received').length})`}
+                  : tab === 'received'
+                  ? `In Store (${batches.filter((b) => b.status === 'received').length})`
+                  : `Stocked Out (${batches.filter((b) => b.status === 'stockout').length})`}
               </Text>
             </TouchableOpacity>
           );
@@ -240,6 +284,7 @@ export const VendorBatchListScreen: React.FC = () => {
         spoilage={batchSpoilage}
         loading={spoilageLoading}
         onClose={() => setSpoilageTarget(null)}
+        onStockout={handleStockoutConfirm}
       />
 
       {/* Report Incident Modal */}
@@ -432,6 +477,33 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 12,
     letterSpacing: 0.3,
+  },
+  stockoutBtn: {
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.rustRed,
+  },
+  stockoutBtnText: {
+    color: colors.rustRed,
+    fontWeight: '800',
+    fontSize: 12,
+    letterSpacing: 0.2,
+  },
+  stockoutBadgeBox: {
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  stockoutBadgeText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '700',
   },
   reportIssueBtn: {
     backgroundColor: colors.backgroundAlt,

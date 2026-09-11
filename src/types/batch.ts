@@ -1,4 +1,4 @@
-export type BatchStatus = 'created' | 'assigned' | 'received';
+export type BatchStatus = 'created' | 'assigned' | 'received' | 'stockout';
 
 export interface Batch {
   _id?: string;
@@ -9,6 +9,7 @@ export interface Batch {
   manufacturer: string;
   volume_kg: number;
   quantity_kg?: number;
+  remaining_volume_kg?: number;
   initialPH: number;
   temperatureC: number;
   humidityPct: number;
@@ -20,6 +21,7 @@ export interface Batch {
   created_at?: string;
   assigned_at?: string;
   received_at?: string;
+  stocked_out_at?: string;
   mfg_timestamp?: string;
   mfgTimestamp?: string;
 }

@@ -26,6 +26,13 @@ export const batchService = {
     return res.data;
   },
 
+  async stockoutBatch(batchId: string): Promise<{ ok: boolean; message?: string }> {
+    const res = await api.put<{ ok: boolean; message?: string }>(
+      `/api/batches/${encodeURIComponent(batchId)}/stockout`
+    );
+    return res.data;
+  },
+
   async deleteBatch(batchId: string): Promise<{ ok: boolean }> {
     const res = await api.delete<{ ok: boolean }>(`/api/batches/${encodeURIComponent(batchId)}`);
     return res.data;

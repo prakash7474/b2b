@@ -18,6 +18,7 @@ interface SpoilageRiskDialogProps {
   spoilage: BatchSpoilageResult | null;
   loading: boolean;
   onClose: () => void;
+  onStockout?: (batch: Batch) => void;
 }
 
 export const SpoilageRiskDialog: React.FC<SpoilageRiskDialogProps> = ({
@@ -26,19 +27,31 @@ export const SpoilageRiskDialog: React.FC<SpoilageRiskDialogProps> = ({
   spoilage,
   loading,
   onClose,
+  onStockout,
 }) => {
   if (!visible) return null;
 
-  const riskLabel = (spoilage?.mlRiskLabel || spoilage?.riskLabel || 'Low') as 'Low' | 'Medium' | 'High';
+  const isStockOut = !!(spoilage?.isStockOut || batch?.status === 'stockout' || spoilage?.riskLabel === 'None' || (spoilage?.freshnessRisk === 'Stock Out'));
+  const rawRisk = spoilage?.mlRiskLabel || spoilage?.riskLabel || 'Low';
+  const riskLabel = (isStockOut ? 'None' : rawRisk) as 'Low' | 'Medium' | 'High' | 'None';
 
-  const getRiskColors = (risk: 'Low' | 'Medium' | 'High') => {
+  const getRiskColors = (risk: 'Low' | 'Medium' | 'High' | 'None') => {
+    if (isStockOut || risk === 'None') {
+      return {
+        bg: colors.backgroundAlt,
+        text: colors.textSecondary,
+        border: colors.borderLight,
+        action: 'Batch is marked as Stock Out / Depleted and removed from the active store ledger. No active spoilage risk applies.',
+        actionGlyph: '○',
+      };
+    }
     switch (risk) {
       case 'High':
         return {
           bg: colors.dangerBg,
           text: colors.rustRed,
           border: colors.rustRed,
-          action: 'High spoilage risk. Recommend immediate stock clearance, discounted sale, or notifying kitchen admin.',
+          action: 'High spoilage risk detected in this batch. Recommend immediate clearance, discounting, or marking as Stock Out.',
           actionGlyph: '✗',
         };
       case 'Medium':
@@ -62,8 +75,8 @@ export const SpoilageRiskDialog: React.FC<SpoilageRiskDialogProps> = ({
   };
 
   const riskMeta = getRiskColors(riskLabel);
-  const compositeRiskPct = Math.round(((spoilage?.riskScore ?? 0.15)) * 100);
-  const confidencePct = Math.round(((spoilage?.confidence ?? spoilage?.mlConfidence ?? 0.9)) * (spoilage?.confidence && spoilage.confidence <= 1 ? 100 : 1));
+  const compositeRiskPct = isStockOut ? 0 : Math.round(((spoilage?.riskScore ?? 0.15)) * 100);
+  const confidencePct = isStockOut ? 100 : Math.round(((spoilage?.confidence ?? spoilage?.mlConfidence ?? 0.9)) * (spoilage?.confidence && spoilage.confidence <= 1 ? 100 : 1));
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
@@ -134,10 +147,24 @@ export const SpoilageRiskDialog: React.FC<SpoilageRiskDialogProps> = ({
                 <Text style={styles.actionBoxDesc}>{riskMeta.action}</Text>
               </View>
 
-              {/* Action Button */}
-              <TouchableOpacity style={styles.dismissBtn} onPress={onClose}>
-                <Text style={styles.dismissBtnText}>Acknowledge & Close</Text>
-              </TouchableOpacity>
+              {/* Action Buttons */}
+              <View style={styles.dialogBtnGroup}>
+                {!isStockOut && onStockout && batch ? (
+                  <TouchableOpacity
+                    style={styles.stockoutActionBtn}
+                    onPress={() => {
+                      onClose();
+                      onStockout(batch);
+                    }}
+                  >
+                    <Text style={styles.stockoutActionBtnText}>✕ Mark Stock Out (Remove from Store)</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity style={styles.dismissBtn} onPress={onClose}>
+                  <Text style={styles.dismissBtnText}>Acknowledge & Close</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
             <View style={styles.errorContainer}>
@@ -309,6 +336,23 @@ const styles = StyleSheet.create({
     color: colors.inkCharcoal,
     lineHeight: 18,
     fontWeight: '500',
+  },
+  dialogBtnGroup: {
+    gap: 8,
+  },
+  stockoutActionBtn: {
+    backgroundColor: colors.backgroundAlt,
+    paddingVertical: 11,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.rustRed,
+    alignItems: 'center',
+  },
+  stockoutActionBtnText: {
+    color: colors.rustRed,
+    fontWeight: '800',
+    fontSize: 13,
+    letterSpacing: 0.3,
   },
   dismissBtn: {
     backgroundColor: colors.clayTerracotta,

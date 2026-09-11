@@ -107,13 +107,16 @@ export interface VendorSpoilageResult {
   hasRefrigerator: boolean;
   storageType: string;
   fridgeTemperatureC?: number;
-  riskLabel: 'Low' | 'Medium' | 'High';
+  riskLabel: 'Low' | 'Medium' | 'High' | 'None';
+  isStockOut?: boolean;
   confidence: number;
   riskScore: number;
+  freshnessScore?: number;
   hoursSinceManufacture: number;
   hoursToExpiry: number;
   probabilities?: Record<string, number>;
   dataSource?: string;
+  statusMessage?: string;
 }
 
 export interface BatchSpoilageResult {
@@ -129,9 +132,11 @@ export interface BatchSpoilageResult {
   sellThroughRate: number;
   riskLabel?: string;
   confidence?: number;
-  mlRiskLabel?: 'Low' | 'Medium' | 'High';
+  mlRiskLabel?: 'Low' | 'Medium' | 'High' | 'None';
   mlConfidence?: number;
   mlProbabilities?: Record<string, number>;
+  isStockOut?: boolean;
+  statusMessage?: string;
 }
 
 export interface PredictionHistoryItem {

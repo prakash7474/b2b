@@ -90,7 +90,7 @@ export const usePredictionStore = create<PredictionState>((set) => ({
 
   fetchBatchSpoilage: async (batchId: string) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ batchSpoilage: null, isLoading: true, error: null });
       const spoilage = await predictionService.getBatchSpoilageRisk(batchId);
       set({ batchSpoilage: spoilage, isLoading: false });
       return spoilage;

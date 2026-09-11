@@ -41,6 +41,7 @@ This platform provides:
 ├── b2p_spoilage_risk_data.csv       # Spoilage model training data
 │
 ├── DOCUMENTATION.md                # Full project documentation
+├── STOCK_ALLOCATION_README.md      # Stock allocation, lifecycle & spoilage risk logic
 ├── demand_forecast_model_documentation.md
 ├── spoilage_risk_model_documentation.md
 └── B2P_Database_Schema_Black_White_v2.html
