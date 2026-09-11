@@ -41,7 +41,7 @@ export const BatchListScreen: React.FC = () => {
   const { batches, fetchBatches, addBatch, assignBatch, receiveBatch, removeBatch, isLoading } = useBatchStore();
   const { vendors, fetchVendors } = useVendorStore();
 
-  const [statusFilter, setStatusFilter] = useState<BatchStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<BatchStatus | 'all' | 'archived'>('all');
   const [assigningBatch, setAssigningBatch] = useState<Batch | null>(null);
   const [detailBatch, setDetailBatch] = useState<Batch | null>(null);
   const [batchToDelete, setBatchToDelete] = useState<Batch | null>(null);
@@ -216,10 +216,11 @@ export const BatchListScreen: React.FC = () => {
 
   const filteredBatches = useMemo(() => {
     return batches.filter((b) => {
-      if (statusFilter === 'all') return true;
+      if (statusFilter === 'all') return b.status !== 'archived';
       if (statusFilter === 'assigned') return b.status === 'assigned';
       if (statusFilter === 'received') return b.status === 'received';
       if (statusFilter === 'created') return b.status === 'created';
+      if (statusFilter === 'archived') return b.status === 'archived';
       return true;
     });
   }, [batches, statusFilter]);
@@ -252,13 +253,14 @@ export const BatchListScreen: React.FC = () => {
         {/* Filter Bar */}
         <View style={styles.filterSection}>
           <View style={styles.tabSegments}>
-            {(['all', 'created', 'assigned', 'received'] as const).map((st) => {
+            {(['all', 'created', 'assigned', 'received', 'archived'] as const).map((st) => {
               const active = statusFilter === st;
               const labels: Record<string, string> = {
                 all: 'All Batches',
                 created: 'Created',
                 assigned: 'In Transit',
                 received: 'Received',
+                archived: 'Archived',
               };
               return (
                 <TouchableOpacity
@@ -303,7 +305,7 @@ export const BatchListScreen: React.FC = () => {
               const ageStr = getBatchAge(batch.mfg_timestamp || batch.created_at);
 
               return (
-                <View key={batch.batch_id} style={styles.batchCard}>
+                <View key={batch.batch_id} style={[styles.batchCard, batch.status === 'archived' && { opacity: 0.65 }]}>
                   <View style={styles.batchTopRule} />
 
                   {/* Card Header */}

@@ -18,6 +18,8 @@ import { BatchStatusBadge } from '../../components/BatchStatusBadge';
 import { ReceiveBatchModal } from './ReceiveBatchModal';
 import { SpoilageRiskDialog } from './SpoilageRiskDialog';
 import { ReportIssueModal } from './ReportIssueModal';
+import { ConfirmDialog } from '../../components/ledger';
+import { batchService } from '../../services/batchService';
 import { colors, typography } from '../../theme';
 
 export const VendorBatchListScreen: React.FC = () => {
@@ -25,16 +27,24 @@ export const VendorBatchListScreen: React.FC = () => {
   const { batches, fetchBatches, stockoutBatch, isLoading } = useBatchStore();
   const { fetchBatchSpoilage, batchSpoilage } = usePredictionStore();
 
-  const [filter, setFilter] = useState<'all' | 'assigned' | 'received' | 'stockout'>('all');
+  const [filter, setFilter] = useState<'all' | 'assigned' | 'received' | 'stockout' | 'archived'>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [receiveBatchTarget, setReceiveBatchTarget] = useState<Batch | null>(null);
   const [reportIssueTarget, setReportIssueTarget] = useState<Batch | null>(null);
+  const [stockoutTarget, setStockoutTarget] = useState<Batch | null>(null);
   const [spoilageTarget, setSpoilageTarget] = useState<Batch | null>(null);
   const [spoilageLoading, setSpoilageLoading] = useState(false);
+  const [archivedBatches, setArchivedBatches] = useState<Batch[]>([]);
 
   const loadData = async () => {
     if (vendor_id) {
       await fetchBatches(vendor_id);
+      try {
+        const history = await batchService.getVendorBatchHistory(vendor_id);
+        setArchivedBatches(history);
+      } catch (err) {
+        console.warn('Failed to load archived batches', err);
+      }
     }
   };
 
@@ -61,33 +71,33 @@ export const VendorBatchListScreen: React.FC = () => {
   };
 
   const handleStockoutConfirm = (batch: Batch) => {
-    Alert.alert(
-      'Confirm Stock Out',
-      `Mark Batch #${batch.batch_id} (${batch.product_name}) as Stock Out?\n\nThis will record the batch as depleted and remove it from your active In Store page.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Yes, Stock Out',
-          style: 'destructive',
-          onPress: async () => {
-            const ok = await stockoutBatch(batch.batch_id);
-            if (ok) {
-              Alert.alert(
-                'Stock Out Recorded',
-                `Batch #${batch.batch_id} marked as Stock Out and removed from the In Store page.`
-              );
-              await loadData();
-            } else {
-              Alert.alert('Error', 'Failed to update batch status.');
-            }
-          },
-        },
-      ]
-    );
+    setStockoutTarget(batch);
   };
 
-  const vendorBatches = batches.filter((b) => {
-    if (filter === 'all') return true;
+  const handleExecuteStockout = async () => {
+    if (!stockoutTarget) return;
+    try {
+      const ok = await stockoutBatch(stockoutTarget.batch_id);
+      if (ok) {
+        setStockoutTarget(null);
+        await loadData();
+      }
+    } catch (err) {
+      console.error('Failed to stock out batch:', err);
+    } finally {
+      setStockoutTarget(null);
+    }
+  };
+
+  const uniqueBatchMap = new Map<string, Batch>();
+  batches.forEach((b) => uniqueBatchMap.set(b.batch_id, b));
+  archivedBatches.forEach((b) => uniqueBatchMap.set(b.batch_id, b));
+  const allBatches = Array.from(uniqueBatchMap.values());
+  const activeBatches = allBatches.filter((b) => b.status !== 'archived' && b.status !== 'stockout');
+
+  const vendorBatches = allBatches.filter((b) => {
+    if (filter === 'all') return b.status !== 'archived' && b.status !== 'stockout';
+    if (filter === 'archived' || filter === 'stockout') return b.status === 'archived' || b.status === 'stockout';
     return b.status === filter;
   });
 
@@ -211,7 +221,7 @@ export const VendorBatchListScreen: React.FC = () => {
 
       {/* Filter Chips Bar */}
       <View style={styles.filterRow}>
-        {(['all', 'assigned', 'received', 'stockout'] as const).map((tab) => {
+        {(['all', 'assigned', 'received', 'stockout', 'archived'] as const).map((tab) => {
           const isSelected = filter === tab;
           return (
             <TouchableOpacity
@@ -221,12 +231,14 @@ export const VendorBatchListScreen: React.FC = () => {
             >
               <Text style={[styles.filterText, isSelected && styles.filterTextActive]}>
                 {tab === 'all'
-                  ? `All (${batches.length})`
+                  ? `All Active (${activeBatches.length})`
                   : tab === 'assigned'
-                  ? `Awaiting Receipt (${batches.filter((b) => b.status === 'assigned').length})`
+                  ? `Awaiting (${allBatches.filter((b) => b.status === 'assigned').length})`
                   : tab === 'received'
-                  ? `In Store (${batches.filter((b) => b.status === 'received').length})`
-                  : `Stocked Out (${batches.filter((b) => b.status === 'stockout').length})`}
+                  ? `In Store (${allBatches.filter((b) => b.status === 'received').length})`
+                  : tab === 'archived'
+                  ? `Archived (${allBatches.filter((b) => b.status === 'archived').length})`
+                  : `Stock Out (${allBatches.filter((b) => b.status === 'stockout').length})`}
               </Text>
             </TouchableOpacity>
           );
@@ -296,6 +308,18 @@ export const VendorBatchListScreen: React.FC = () => {
           setReportIssueTarget(null);
           loadData();
         }}
+      />
+
+      {/* Confirm Stock Out Dialog */}
+      <ConfirmDialog
+        visible={!!stockoutTarget}
+        title="Confirm Stock Out"
+        message={`Mark Batch #${stockoutTarget?.batch_id} (${stockoutTarget?.product_name}) as Stock Out?\n\nThis will record the batch as depleted, remove it from your active In Store page, and archive it.`}
+        confirmLabel="Mark Stock Out"
+        cancelLabel="Cancel"
+        isDestructive
+        onConfirm={handleExecuteStockout}
+        onCancel={() => setStockoutTarget(null)}
       />
     </SafeAreaView>
   );

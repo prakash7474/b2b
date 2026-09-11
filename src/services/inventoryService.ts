@@ -1,5 +1,5 @@
 import { api } from './api';
-import { InventoryItem, InventorySummary, RestockOrder } from '../types/batch';
+import { InventoryItem, InventorySummary, RestockOrder, RestockRequest } from '../types/batch';
 
 export const inventoryService = {
   async getInventory(vendorId?: string): Promise<InventoryItem[]> {
@@ -26,12 +26,20 @@ export const inventoryService = {
     product_name?: string;
     requested_quantity_kg: number;
     notes?: string;
-  }): Promise<{ ok: boolean; order_id: string; order?: RestockOrder }> {
-    const res = await api.post<{ ok: boolean; order_id: string; order?: RestockOrder }>(
-      '/api/orders',
-      payload
-    );
-    return res.data;
+  }): Promise<{ ok: boolean; order_id: string; request_id?: string; order?: RestockOrder; request?: RestockRequest }> {
+    try {
+      const res = await api.post<{ ok: boolean; request_id: string; order_id: string; request?: RestockRequest; order?: RestockOrder }>(
+        '/api/restock-requests',
+        payload
+      );
+      return res.data;
+    } catch {
+      const res = await api.post<{ ok: boolean; order_id: string; order?: RestockOrder }>(
+        '/api/orders',
+        payload
+      );
+      return res.data;
+    }
   },
 
   async mutateInventory(payload: {
@@ -39,6 +47,9 @@ export const inventoryService = {
     action?: 'add_batch' | 'remove_batch' | 'edit';
     quantity?: number;
     quantity_delta?: number;
+    batch_id?: string;
+    product_name?: string;
+    notes?: string;
   }): Promise<any> {
     const res = await api.patch('/api/inventory', payload);
     return res.data;
@@ -53,5 +64,69 @@ export const inventoryService = {
     const res = await api.get('/api/dashboard/summary');
     return res.data;
   },
-};
 
+  // ── Vendor Self-Service Stock Update ─────────────────────────────
+  async vendorUpdateStock(vendorId: string, remainingQuantityKg: number): Promise<{
+    ok: boolean;
+    vendor_id: string;
+    previous_quantity_kg: number;
+    remaining_quantity_kg: number;
+    below_minimum: boolean;
+    is_stockout: boolean;
+    minimum_stock_kg: number;
+    message: string;
+  }> {
+    const res = await api.put('/api/vendor/inventory/update', {
+      vendor_id: vendorId,
+      remaining_quantity_kg: remainingQuantityKg,
+    });
+    return res.data;
+  },
+
+  // ── Restock Requests (Vendor → Admin Approval) ───────────────────
+  async createRestockRequest(payload: {
+    vendor_id: string;
+    product_name?: string;
+    requested_quantity_kg: number;
+    notes?: string;
+  }): Promise<{ ok: boolean; request_id: string; order_id: string; request?: RestockRequest }> {
+    const res = await api.post('/api/restock-requests', payload);
+    return res.data;
+  },
+
+  async getRestockRequests(params?: {
+    status?: string;
+    vendor_id?: string;
+  }): Promise<RestockRequest[]> {
+    const res = await api.get<RestockRequest[]>('/api/restock-requests', { params });
+    return res.data;
+  },
+
+  async approveRestockRequest(requestId: string, adminNotes?: string): Promise<{ ok: boolean; request?: RestockRequest }> {
+    try {
+      const res = await api.patch(`/api/restock-requests/${encodeURIComponent(requestId)}/approve`, {
+        admin_notes: adminNotes || '',
+      });
+      return res.data;
+    } catch {
+      const res = await api.post(`/api/orders/${encodeURIComponent(requestId)}/approve`, {
+        admin_notes: adminNotes || '',
+      });
+      return res.data;
+    }
+  },
+
+  async rejectRestockRequest(requestId: string, reason?: string): Promise<{ ok: boolean; request?: RestockRequest }> {
+    try {
+      const res = await api.patch(`/api/restock-requests/${encodeURIComponent(requestId)}/reject`, {
+        admin_notes: reason || '',
+      });
+      return res.data;
+    } catch {
+      const res = await api.post(`/api/orders/${encodeURIComponent(requestId)}/reject`, {
+        admin_notes: reason || '',
+      });
+      return res.data;
+    }
+  },
+};

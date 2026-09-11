@@ -16,7 +16,9 @@ import { inventoryService } from '../../services/inventoryService';
 import { predictionService } from '../../services/predictionService';
 import { logService } from '../../services/logService';
 import { Vendor } from '../../types/vendor';
-import { InventoryItem } from '../../types/batch';
+import { InventoryItem, Batch } from '../../types/batch';
+import { batchService } from '../../services/batchService';
+import { BatchStatusBadge } from '../../components/BatchStatusBadge';
 import {
   LedgerPanel,
   StatRow,
@@ -80,8 +82,11 @@ export const InventoryListScreen: React.FC = () => {
   // Action Modals State (Add / Remove / Edit)
   const [activeModal, setActiveModal] = useState<'add' | 'remove' | 'edit' | null>(null);
   const [modalInputQty, setModalInputQty] = useState('');
+  const [modalBatchId, setModalBatchId] = useState('');
+  const [modalProductName, setModalProductName] = useState('Idli Batter');
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
+  const [shopBatches, setShopBatches] = useState<Batch[]>([]);
 
   // Dropdown expansion state for mobile / custom select
   const [showVendorPickerDropdown, setShowVendorPickerDropdown] = useState(false);
@@ -133,8 +138,12 @@ export const InventoryListScreen: React.FC = () => {
 
     setShopLoading(true);
     try {
-      const items = await inventoryService.getInventory(vendorId);
+      const [items, batchesRes] = await Promise.all([
+        inventoryService.getInventory(vendorId),
+        batchService.getBatches({ vendor_id: vendorId }).catch(() => [] as Batch[]),
+      ]);
       setInventoryItems(items);
+      setShopBatches(batchesRes.filter((b) => b.status !== 'archived' && b.status !== 'stockout'));
     } catch (err) {
       console.warn('Failed to fetch inventory for vendor', vendorId, err);
     } finally {
@@ -145,8 +154,12 @@ export const InventoryListScreen: React.FC = () => {
   const refreshVendorInventory = async (vendorId: string) => {
     setShopLoading(true);
     try {
-      const items = await inventoryService.getInventory(vendorId);
+      const [items, batchesRes] = await Promise.all([
+        inventoryService.getInventory(vendorId),
+        batchService.getBatches({ vendor_id: vendorId }).catch(() => [] as Batch[]),
+      ]);
       setInventoryItems(items);
+      setShopBatches(batchesRes.filter((b) => b.status !== 'archived' && b.status !== 'stockout'));
       const newStock = items.reduce((acc, item) => acc + (item.quantity || 0), 0);
       if (demandResult) {
         const netNeeded = Math.max(0, Math.round((demandResult.predictedDemand - newStock) * 10) / 10);
@@ -271,6 +284,11 @@ export const InventoryListScreen: React.FC = () => {
     } else {
       setModalInputQty('10');
     }
+    if (type === 'add') {
+      const randomNum = Math.floor(10000 + Math.random() * 90000);
+      setModalBatchId(`B${randomNum}`);
+      setModalProductName('Idli Batter');
+    }
   };
 
   const handleModalSubmit = async () => {
@@ -289,6 +307,8 @@ export const InventoryListScreen: React.FC = () => {
           vendor_id: selectedVendorId,
           action: 'add_batch',
           quantity_delta: val,
+          batch_id: modalBatchId.trim() || undefined,
+          product_name: modalProductName.trim() || 'Idli Batter',
         });
       } else if (activeModal === 'remove') {
         await inventoryService.mutateInventory({
@@ -599,6 +619,50 @@ export const InventoryListScreen: React.FC = () => {
               </View>
             )}
 
+            {/* Active Outlet Batches Ledger */}
+            {selectedVendor ? (
+              <View style={styles.outletBatchesContainer}>
+                <View style={styles.outletBatchesHeader}>
+                  <Text style={styles.outletBatchesTitle}>
+                    ACTIVE OUTLET BATCHES ({shopBatches.length})
+                  </Text>
+                  <Text style={styles.outletBatchesSub}>
+                    Live batches currently stocked in {selectedVendor.shop_name}'s inventory
+                  </Text>
+                </View>
+                {shopBatches.length === 0 ? (
+                  <View style={styles.emptyBatchesBox}>
+                    <Text style={styles.emptyBatchesText}>
+                      No active batches currently in store for this partner. Click [+ Add Batches] below to allocate stock.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.batchCardsGrid}>
+                    {shopBatches.map((b) => (
+                      <View key={b.batch_id} style={styles.batchItemCard}>
+                        <View style={styles.batchItemHeader}>
+                          <Text style={styles.batchItemCode}>Batch #{b.batch_id}</Text>
+                          <BatchStatusBadge status={b.status} />
+                        </View>
+                        <Text style={styles.batchItemProduct}>{b.product_name || 'Idli Batter'}</Text>
+                        <View style={styles.batchItemMetaRow}>
+                          <Text style={styles.batchItemMeta}>
+                            Volume: <Text style={styles.monoStrong}>{b.volume_kg || b.quantity_kg || 0} kg</Text>
+                          </Text>
+                          <Text style={styles.batchItemMeta}>
+                            pH: <Text style={styles.monoStrong}>{b.initialPH ? Number(b.initialPH).toFixed(2) : '4.40'}</Text>
+                          </Text>
+                          <Text style={styles.batchItemMeta}>
+                            Temp: <Text style={styles.monoStrong}>{b.temperatureC ? Number(b.temperatureC).toFixed(1) : '26.5'}°C</Text>
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ) : null}
+
             {/* 7.3 Bottom Action Row */}
             <View style={[styles.bottomActionRow, isMobile && styles.bottomActionRowMobile]}>
               <TouchableOpacity
@@ -702,6 +766,42 @@ export const InventoryListScreen: React.FC = () => {
                       placeholderTextColor={colors.textMuted}
                     />
                   </View>
+
+                  {activeModal === 'add' ? (
+                    <>
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>BATCH IDENTIFIER (AUTO-GENERATED) *</Text>
+                        <TextInput
+                          style={[styles.fieldInput, styles.fieldInputMono]}
+                          value={modalBatchId}
+                          onChangeText={setModalBatchId}
+                          placeholder="e.g. B20045"
+                          placeholderTextColor={colors.textMuted}
+                          autoCapitalize="characters"
+                        />
+                        <Text style={styles.fieldHint}>
+                          This tracked batch document will be registered in {selectedVendor?.shop_name}'s ledger.
+                        </Text>
+                      </View>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>BATTER PRODUCT</Text>
+                        <View style={styles.presetButtonsRow}>
+                          {['Idli Batter', 'Dosa Batter', 'Combo Pack'].map((prod) => (
+                            <TouchableOpacity
+                              key={prod}
+                              style={[styles.presetBtn, modalProductName === prod && styles.presetBtnActive]}
+                              onPress={() => setModalProductName(prod)}
+                            >
+                              <Text style={[styles.presetBtnText, modalProductName === prod && styles.presetBtnTextActive]}>
+                                {prod}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </>
+                  ) : null}
 
                   <View style={styles.modalActions}>
                     <TouchableOpacity
@@ -1363,5 +1463,98 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.paperWhite,
     fontFamily: typography.fontFamily.body,
+  },
+  presetBtnActive: {
+    backgroundColor: colors.clayTerracotta,
+    borderColor: colors.clayTerracotta,
+  },
+  presetBtnTextActive: {
+    color: colors.paperWhite,
+  },
+  fieldHint: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 3,
+    fontFamily: typography.fontFamily.body,
+  },
+  outletBatchesContainer: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1.5,
+    borderTopColor: colors.borderHairline,
+  },
+  outletBatchesHeader: {
+    marginBottom: spacing.sm,
+  },
+  outletBatchesTitle: {
+    fontSize: 11,
+    fontFamily: typography.fontFamily.mono,
+    fontWeight: '700',
+    color: colors.clayTerracotta,
+    letterSpacing: 0.8,
+  },
+  outletBatchesSub: {
+    fontSize: 11.5,
+    color: colors.textSecondary,
+    fontFamily: typography.fontFamily.body,
+    marginTop: 2,
+  },
+  emptyBatchesBox: {
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.borderHairline,
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  emptyBatchesText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  batchCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  batchItemCard: {
+    backgroundColor: colors.paperWhite,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    minWidth: 200,
+    flex: 1,
+  },
+  batchItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  batchItemCode: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fontFamily.mono,
+    color: colors.inkCharcoal,
+  },
+  batchItemProduct: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.inkCharcoal,
+    marginBottom: 6,
+  },
+  batchItemMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  batchItemMeta: {
+    fontSize: 10.5,
+    color: colors.textSecondary,
+    fontFamily: typography.fontFamily.mono,
   },
 });

@@ -11,6 +11,8 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { inventoryService } from '../../services/inventoryService';
+import { batchService } from '../../services/batchService';
+import { Batch } from '../../types/batch';
 import { colors, typography } from '../../theme';
 
 interface RequestRestockModalProps {
@@ -35,12 +37,21 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
   const [quantityStr, setQuantityStr] = useState('15');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [availableBatches, setAvailableBatches] = useState<Batch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [fetchingBatches, setFetchingBatches] = useState(false);
 
   useEffect(() => {
     if (visible) {
       const defaultQty = suggestedQty > 0 ? suggestedQty : 15;
       setQuantityStr(String(defaultQty));
       setNotes('');
+      setSelectedBatchId(null);
+      setFetchingBatches(true);
+      batchService.getAvailableBatches()
+        .then((bList) => setAvailableBatches(bList || []))
+        .catch((err) => console.warn('Failed to load available batches:', err))
+        .finally(() => setFetchingBatches(false));
     }
   }, [visible, suggestedQty]);
 
@@ -59,13 +70,15 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
         vendor_id: vendorId,
         product_name: productName,
         requested_quantity_kg: qty,
+        requested_batch_id: selectedBatchId || undefined,
         notes: notes.trim(),
-      });
+      } as any);
       setLoading(false);
       if (res.ok) {
+        const reqId = res.order_id || res.request_id || 'REQ';
         Alert.alert(
           'Restock Requested',
-          `Order #${res.order_id} logged for ${qty} kg of ${productName}. Kitchen dispatch supervisor has received your requisition.`,
+          `Requisition #${reqId} logged for ${qty} kg of ${productName}${selectedBatchId ? ` (Batch #${selectedBatchId})` : ''}. Kitchen dispatch supervisor has received your request.`,
           [{ text: 'OK', onPress: onSuccess }]
         );
       } else {
@@ -101,6 +114,57 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
               <View style={styles.productChip}>
                 <Text style={styles.productChipText}>{productName}</Text>
               </View>
+            </View>
+
+            {/* Central Kitchen Created Batches Picker */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.fieldLabel}>
+                Ready Batches in Central Kitchen ({availableBatches.length})
+              </Text>
+              {fetchingBatches ? (
+                <ActivityIndicator size="small" color={colors.clayTerracotta} style={{ marginVertical: 6 }} />
+              ) : availableBatches.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.batchScroll}>
+                  {availableBatches.map((b) => {
+                    const isSelected = selectedBatchId === b.batch_id;
+                    const bVol = b.volume_kg || b.quantity_kg || 15;
+                    return (
+                      <TouchableOpacity
+                        key={b.batch_id}
+                        style={[
+                          styles.batchSelectCard,
+                          isSelected && styles.batchSelectCardActive,
+                        ]}
+                        onPress={() => {
+                          if (isSelected) {
+                            setSelectedBatchId(null);
+                          } else {
+                            setSelectedBatchId(b.batch_id);
+                            setQuantityStr(String(bVol));
+                          }
+                        }}
+                      >
+                        <View style={styles.batchCardTop}>
+                          <Text style={[styles.batchCardId, isSelected && styles.batchCardIdActive]}>
+                            #{b.batch_id}
+                          </Text>
+                          {isSelected && <Text style={styles.checkGlyph}>✓</Text>}
+                        </View>
+                        <Text style={[styles.batchCardVol, isSelected && styles.batchCardVolActive]}>
+                          {bVol} kg
+                        </Text>
+                        <Text style={styles.batchCardSub}>
+                          pH {b.initialPH ?? 4.4} • {b.temperatureC ?? 26}°C
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              ) : (
+                <Text style={styles.noBatchHint}>
+                  No unassigned batches ready in central inventory. Your requisition will request kitchen to mill a fresh batch.
+                </Text>
+              )}
             </View>
 
             {/* Quantity Input */}
@@ -321,5 +385,64 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.textInverse,
     letterSpacing: 0.3,
+  },
+  batchScroll: {
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  batchSelectCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1.5,
+    borderColor: colors.borderLight,
+    borderRadius: 4,
+    padding: 10,
+    marginRight: 10,
+    minWidth: 130,
+  },
+  batchSelectCardActive: {
+    borderColor: colors.clayTerracotta,
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 2,
+  },
+  batchCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  batchCardId: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    fontFamily: typography.mono,
+  },
+  batchCardIdActive: {
+    color: colors.clayTerracotta,
+    fontWeight: '800',
+  },
+  checkGlyph: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: colors.bananaGreen,
+  },
+  batchCardVol: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.inkCharcoal,
+  },
+  batchCardVolActive: {
+    color: colors.clayTerracotta,
+  },
+  batchCardSub: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  noBatchHint: {
+    fontSize: 11.5,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginTop: 4,
+    lineHeight: 16,
   },
 });
