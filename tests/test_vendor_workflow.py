@@ -198,8 +198,8 @@ class TestVendorWorkflow(unittest.TestCase):
             data = res.get_json()
             self.assertTrue(data.get("ok"))
 
-    def test_assign_batch_archives_old_received_batches(self):
-        """Assigning a new batch to a vendor archives existing received batches."""
+    def test_assign_batch_preserves_existing_batches(self):
+        """Assigning a new batch to a vendor keeps existing batches active."""
         batch_id = "B20020_NEW"
         vendor_id = "V100"
         mock_vendor = {"vendor_id": vendor_id, "shop_name": "Lakshmi Idli Shop"}
@@ -214,6 +214,7 @@ class TestVendorWorkflow(unittest.TestCase):
         mock_cols = {
             "vendors": MagicMock(),
             "batches": MagicMock(),
+            "inventory": MagicMock(),
             "inventory_movement": MagicMock(),
             "logs": MagicMock(),
         }
@@ -230,9 +231,42 @@ class TestVendorWorkflow(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             data = res.get_json()
             self.assertTrue(data.get("ok"))
-            self.assertEqual(data.get("archived_count"), 1)
-            mock_cols["batches"].update_many.assert_called_once()
-            mock_cols["inventory_movement"].insert_one.assert_called()
+            self.assertEqual(data.get("archived_count"), 0)
+            mock_cols["batches"].update_many.assert_not_called()
+
+    def test_remove_assigned_batches(self):
+        """Admin can select and remove assigned batches from a vendor."""
+        vendor_id = "V100"
+        batch_to_remove = {
+            "_id": "batch_obj_id_123",
+            "batch_id": "BATCH-7459",
+            "vendor_id": vendor_id,
+            "status": "assigned",
+            "volume_kg": 20.0,
+            "product_name": "Idli Batter",
+        }
+        mock_vendor = {"vendor_id": vendor_id, "shop_name": "Lakshmi Idli Shop"}
+        mock_cols = {
+            "vendors": MagicMock(),
+            "batches": MagicMock(),
+            "inventory": MagicMock(),
+            "inventory_movement": MagicMock(),
+            "logs": MagicMock(),
+        }
+        mock_cols["vendors"].find_one.return_value = mock_vendor
+        mock_cols["batches"].find_one.return_value = batch_to_remove
+        mock_cols["batches"].find.return_value = []
+
+        with patch.dict(flask_app.COLS, mock_cols):
+            res = self.client.post(
+                "/api/inventory/remove-batches",
+                json={"vendor_id": vendor_id, "batch_ids": ["BATCH-7459"]},
+                headers=self.admin_headers,
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertTrue(data.get("ok"))
+            self.assertIn("BATCH-7459", data.get("removedBatches", []))
 
     def test_receive_batch_resets_inventory(self):
         """Vendor confirming receipt resets inventory to new batch quantity."""
@@ -534,7 +568,7 @@ class TestVendorWorkflow(unittest.TestCase):
             inserted_batch = mock_cols["batches"].insert_one.call_args[0][0]
             self.assertEqual(inserted_batch["batch_id"], "B99999")
             self.assertEqual(inserted_batch["vendor_id"], vendor_id)
-            self.assertEqual(inserted_batch["status"], "received")
+            self.assertEqual(inserted_batch["status"], "assigned")
             self.assertEqual(inserted_batch["volume_kg"], 15.0)
             self.assertEqual(inserted_batch["quantity_kg"], 15.0)
 
@@ -545,7 +579,7 @@ class TestVendorWorkflow(unittest.TestCase):
             self.assertEqual(update_payload["batch_number"], "B99999")
 
     def test_admin_add_batch_assigns_existing_unassigned_batch(self):
-        """When admin adds stock referencing an existing unassigned batch, that batch is assigned and received."""
+        """When admin adds stock referencing an existing unassigned batch, that batch is assigned."""
         vendor_id = "V100"
         mock_vendor = {"vendor_id": vendor_id, "shop_name": "Lakshmi Idli Shop"}
         mock_inv = [{"_id": "INV_1", "vendor_id": vendor_id, "quantity": 5.0, "product_name": "Idli Batter"}]
@@ -565,6 +599,9 @@ class TestVendorWorkflow(unittest.TestCase):
         }
         mock_cols["vendors"].find_one.return_value = mock_vendor
         mock_cols["inventory"].find.return_value = mock_inv
+        mock_cols["batches"].find.return_value = [
+            {"batch_id": "B_EXISTING", "vendor_id": vendor_id, "status": "assigned", "volume_kg": 5.0}
+        ]
         mock_cols["batches"].find_one.return_value = existing_batch
 
         with patch.dict(flask_app.COLS, mock_cols):
@@ -587,10 +624,10 @@ class TestVendorWorkflow(unittest.TestCase):
             mock_cols["batches"].update_one.assert_called_once()
             set_fields = mock_cols["batches"].update_one.call_args[0][1]["$set"]
             self.assertEqual(set_fields["vendor_id"], vendor_id)
-            self.assertEqual(set_fields["status"], "received")
+            self.assertEqual(set_fields["status"], "assigned")
 
-    def test_admin_edit_creates_batch_if_none_exists(self):
-        """When admin edits stock from 0 to positive and vendor has no batch, an active batch is created."""
+    def test_admin_edit_inventory_is_disabled(self):
+        """Direct inventory editing is disabled per requirement; stock is managed via batches."""
         vendor_id = "V100"
         mock_vendor = {"vendor_id": vendor_id, "shop_name": "Lakshmi Idli Shop"}
         mock_inv = [{"_id": "INV_1", "vendor_id": vendor_id, "quantity": 0.0, "product_name": "Idli Batter"}]
@@ -604,8 +641,6 @@ class TestVendorWorkflow(unittest.TestCase):
         }
         mock_cols["vendors"].find_one.return_value = mock_vendor
         mock_cols["inventory"].find.return_value = mock_inv
-        mock_cols["batches"].find.return_value = []
-        mock_cols["batches"].find_one.return_value = None
 
         with patch.dict(flask_app.COLS, mock_cols):
             res = self.client.post(
@@ -617,16 +652,9 @@ class TestVendorWorkflow(unittest.TestCase):
                 },
                 headers=self.admin_headers,
             )
-            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.status_code, 400)
             data = res.get_json()
-            self.assertTrue(data.get("ok"))
-            self.assertEqual(data.get("totalQuantity"), 25.0)
-            self.assertIsNotNone(data.get("batch_id"))
-            mock_cols["batches"].insert_one.assert_called_once()
-            batch_doc = mock_cols["batches"].insert_one.call_args[0][0]
-            self.assertEqual(batch_doc["status"], "received")
-            self.assertEqual(batch_doc["volume_kg"], 25.0)
-            self.assertEqual(batch_doc["vendor_id"], vendor_id)
+            self.assertIn("disabled", data.get("error", "").lower())
 
 
 if __name__ == "__main__":

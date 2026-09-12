@@ -258,7 +258,7 @@ export const BatchListScreen: React.FC = () => {
               const labels: Record<string, string> = {
                 all: 'All Batches',
                 created: 'Created',
-                assigned: 'In Transit',
+                assigned: 'Assigned',
                 received: 'Received',
                 archived: 'Archived',
               };
@@ -327,7 +327,7 @@ export const BatchListScreen: React.FC = () => {
                           {batch.status === 'received'
                             ? 'Received'
                             : batch.status === 'assigned'
-                            ? 'In Transit'
+                            ? 'Assigned'
                             : 'Created'}
                         </Text>
                       </View>

@@ -44,15 +44,35 @@ export const inventoryService = {
 
   async mutateInventory(payload: {
     vendor_id: string;
-    action?: 'add_batch' | 'remove_batch' | 'edit';
+    action?: 'add_batch' | 'remove_batch' | 'remove_batches' | 'edit';
     quantity?: number;
     quantity_delta?: number;
     batch_id?: string;
+    batch_ids?: string[];
     product_name?: string;
     notes?: string;
   }): Promise<any> {
-    const res = await api.patch('/api/inventory', payload);
-    return res.data;
+    try {
+      const res = await api.post('/api/inventory', payload);
+      return res.data;
+    } catch {
+      const res = await api.patch('/api/inventory', payload);
+      return res.data;
+    }
+  },
+
+  async removeBatches(vendor_id: string, batch_ids: string[]): Promise<any> {
+    try {
+      const res = await api.post('/api/inventory/remove-batches', { vendor_id, batch_ids });
+      return res.data;
+    } catch {
+      const res = await api.patch('/api/inventory', {
+        vendor_id,
+        action: 'remove_batches',
+        batch_ids,
+      });
+      return res.data;
+    }
   },
 
   async getDashboard(): Promise<any> {

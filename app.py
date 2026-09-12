@@ -257,6 +257,91 @@ def write_movement(vendor_id, product_id, movement_type, quantity, batch_id=None
         print(f"[WARN] write_movement failed: {e}")
 
 
+def sync_vendor_inventory_with_batches(vendor_id: str, new_batch: dict = None):
+    """
+    Ensure the vendor's inventory document(s) strictly match the sum of their active batches.
+    Active batches are those with status in ['received', 'assigned'].
+    Returns:
+        (total_active_stock_kg, active_batches)
+    """
+    if not vendor_id:
+        return 0.0, []
+
+    now = datetime.utcnow()
+    active_batches = list(COLS["batches"].find({
+        "vendor_id": vendor_id,
+        "status": {"$in": ["received", "assigned"]}
+    }))
+    if new_batch and isinstance(new_batch, dict):
+        if not any(isinstance(b, dict) and b.get("batch_id") == new_batch.get("batch_id") for b in active_batches):
+            active_batches.append(new_batch)
+
+    total_active_stock = round(sum(
+        float(b.get("volume_kg", b.get("quantity_kg", 0.0)))
+        for b in active_batches
+        if isinstance(b, dict)
+    ), 1)
+
+    inv_items = list(COLS["inventory"].find({"vendor_id": vendor_id}))
+    if not inv_items:
+        existing_single = COLS["inventory"].find_one({"vendor_id": vendor_id})
+        if existing_single:
+            inv_items = [existing_single]
+
+    if total_active_stock == 0:
+        COLS["inventory"].update_many(
+            {"vendor_id": vendor_id},
+            {"$set": {"quantity": 0.0, "last_updated": now, "freshnessScore": 0.0}}
+        )
+        return 0.0, []
+
+    received_batches = [b for b in active_batches if isinstance(b, dict) and b.get("status") == "received"]
+    primary_batch = (received_batches[0] if received_batches else (active_batches[0] if active_batches else None))
+
+    batch_num = primary_batch.get("batch_number", primary_batch.get("batch_id", "N/A")) if primary_batch else "NONE"
+    product_name = primary_batch.get("product_name", "Idli Batter") if primary_batch else (inv_items[0].get("product_name") if inv_items else "Idli Batter")
+    product_id = PRODUCT_NAME_TO_ID.get(product_name, "Idly_Batter")
+
+    if not inv_items:
+        new_inv = {
+            "inventory_id": f"INV_{vendor_id}",
+            "vendor_id": vendor_id,
+            "product_id": product_id,
+            "product_name": product_name,
+            "batch_number": batch_num,
+            "quantity": total_active_stock,
+            "minimumStock": 10.0,
+            "freshnessScore": 0.95 if total_active_stock > 0 else 0.0,
+            "receivedAt": now,
+            "last_updated": now,
+        }
+        COLS["inventory"].insert_one(new_inv)
+    else:
+        primary_doc = inv_items[0]
+        primary_id = primary_doc.get("_id")
+        inv_filter = {"_id": primary_id} if primary_id is not None else {"vendor_id": vendor_id}
+        update_fields = {
+            "quantity": total_active_stock,
+            "last_updated": now,
+        }
+        if primary_batch:
+            update_fields["batch_number"] = batch_num
+            update_fields["product_name"] = product_name
+            if "received_at" in primary_batch or "receivedAt" in primary_batch:
+                update_fields["receivedAt"] = primary_batch.get("received_at") or primary_batch.get("receivedAt")
+
+        COLS["inventory"].update_one(
+            inv_filter,
+            {"$set": update_fields}
+        )
+        if len(inv_items) > 1:
+            other_ids = [i.get("_id") for i in inv_items[1:] if i.get("_id") is not None]
+            if other_ids:
+                COLS["inventory"].delete_many({"_id": {"$in": other_ids}})
+
+    return total_active_stock, active_batches
+
+
 # ── Festival context lookup (Phase B) ───────────────────────────────
 def get_festival_context(target_date):
     """Return (is_festival: int, festival_type: str) for a given date.
@@ -1281,45 +1366,7 @@ def assign_batch(batch_id):
         v_name = vendor.get("shop_name", vendor_id)
         now = datetime.utcnow()
 
-        # ── Archive old received batches at this vendor ──────────────
-        old_batches = list(COLS["batches"].find({
-            "vendor_id": vendor_id,
-            "status": "received",
-        }))
-        if old_batches:
-            old_batch_ids = [b["batch_id"] for b in old_batches]
-            COLS["batches"].update_many(
-                {"vendor_id": vendor_id, "status": "received"},
-                {"$set": {
-                    "status": "archived",
-                    "archived_at": now,
-                    "archived_reason": "new_batch_assigned",
-                }}
-            )
-            # Record inventory_movement for each archived batch
-            for ob in old_batches:
-                ob_product = ob.get("product_name", "Idli Batter")
-                ob_product_id = PRODUCT_NAME_TO_ID.get(ob_product, ob_product)
-                ob_vol = float(ob.get("volume_kg", 0))
-                write_movement(
-                    vendor_id=vendor_id, product_id=ob_product_id,
-                    movement_type="archive", quantity=-ob_vol,
-                    batch_id=ob.get("batch_id"),
-                    triggered_by="admin",
-                    notes=f"Batch #{ob.get('batch_id')} archived (new batch #{batch_id} assigned)"
-                )
-            # Old batches are archived; active store inventory becomes 0.0 until the new batch is received
-            COLS["inventory"].update_many(
-                {"vendor_id": vendor_id},
-                {"$set": {"quantity": 0.0, "last_updated": now}}
-            )
-            log_event(
-                "activity", "info", "Admin",
-                f"{len(old_batches)} old batch(es) archived at {v_name} before assigning #{batch_id}",
-                {"type": "vendor", "id": vendor_id, "name": v_name},
-                {"archived_batch_ids": old_batch_ids}
-            )
-
+        # NOTE: User requirement: Adding/assigning a batch only adds to batches, never archives existing ones
         # ── Assign the new batch ─────────────────────────────────────
         result = COLS["batches"].update_one(
             {"batch_id": batch_id},
@@ -1343,8 +1390,11 @@ def assign_batch(batch_id):
                 {"$set": {"order_status": "approved"}}
             )
 
+        # Sync vendor inventory to reflect active batches
+        sync_vendor_inventory_with_batches(vendor_id)
+
         log_event("activity", "info", "Admin", f"Batch #{batch_id} assigned to {v_name}", {"type": "batch", "id": batch_id, "name": batch_id})
-        resp = {"ok": True, "vendor_id": vendor_id, "vendor_name": v_name, "archived_count": len(old_batches), "assigned_batch_id": batch_id}
+        resp = {"ok": True, "vendor_id": vendor_id, "vendor_name": v_name, "archived_count": 0, "assigned_batch_id": batch_id}
         if restock_id:
             resp["restock_request_id"] = restock_id
         return jsonify(resp)
@@ -1383,51 +1433,13 @@ def receive_batch(batch_id):
             {"type": "batch", "id": batch_id, "name": batch_id}
         )
 
-        # Update or create inventory entry for this vendor — RESET to new batch qty
-        # (old batches are archived, inventory reflects only the fresh batch)
+        # Update inventory entry for this vendor to reflect sum of all active batches
         if vendor_id:
-            # Archive any lingering received batches (belt-and-suspenders with assign_batch)
-            COLS["batches"].update_many(
-                {"vendor_id": vendor_id, "status": "received", "batch_id": {"$ne": batch_id}},
-                {"$set": {"status": "archived", "archived_at": now, "archived_reason": "new_batch_received"}}
-            )
-
             inv = COLS["inventory"].find_one({"vendor_id": vendor_id})
             prev_qty = float(inv.get("quantity", 0)) if inv else 0.0
-            new_qty = qty  # RESET — not increment
-            mfg_ts = batch.get("mfgTimestamp") or batch.get("mfg_timestamp") or now
             expiry_dt = now + timedelta(hours=24)
-
-            if inv:
-                COLS["inventory"].update_one(
-                    {"vendor_id": vendor_id},
-                    {"$set": {
-                        "quantity": new_qty,
-                        "batch_number": batch.get("batch_number", batch_id),
-                        "product_name": product_name,
-                        "product_id": product_id,
-                        "manufactureDate": mfg_ts,
-                        "expiryAt": expiry_dt,
-                        "receivedAt": now,
-                        "freshnessScore": 0.95,
-                    }}
-                )
-            else:
-                inv_id = f"INV_{vendor_id}"
-                COLS["inventory"].insert_one({
-                    "inventory_id": inv_id,
-                    "vendor_id": vendor_id,
-                    "product_id": product_id,
-                    "product_name": product_name,
-                    "batch_number": batch.get("batch_number", batch_id),
-                    "quantity": new_qty,
-                    "minimumStock": max(5.0, qty / 3.0),
-                    "price": 120.0,
-                    "manufactureDate": mfg_ts,
-                    "expiryAt": expiry_dt,
-                    "receivedAt": now,
-                    "freshnessScore": 0.95,
-                })
+            updated_batch = {**batch, "status": "received"}
+            new_qty, _ = sync_vendor_inventory_with_batches(vendor_id, new_batch=updated_batch)
 
             # Phase C: write inventory_movement event
             write_movement(
@@ -1437,7 +1449,7 @@ def receive_batch(batch_id):
                 expiry_at=expiry_dt,
                 triggered_by="admin",
                 previous_qty=prev_qty, new_qty=new_qty,
-                notes=f"Batch #{batch_id} received (inventory reset to {new_qty} kg)"
+                notes=f"Batch #{batch_id} received (inventory is {new_qty} kg)"
             )
 
         return jsonify({"ok": True, "batch_id": batch_id, "status": "received"})
@@ -1449,7 +1461,11 @@ def receive_batch(batch_id):
 @app.route("/api/batches/<batch_id>", methods=["DELETE"])
 def delete_batch(batch_id):
     try:
+        b = COLS["batches"].find_one({"batch_id": batch_id})
+        vendor_id = b.get("vendor_id") if b else None
         COLS["batches"].delete_one({"batch_id": batch_id})
+        if vendor_id:
+            sync_vendor_inventory_with_batches(vendor_id)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -1596,28 +1612,19 @@ def get_inventory_summary():
         return jsonify({"error": "vendor_id is required"}), 400
 
     now = datetime.utcnow()
-    # Find active batches for this vendor
-    received_batches = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "received"}))
-    assigned_batches = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "assigned"}))
+    total_qty, active_batches = sync_vendor_inventory_with_batches(vendor_id)
+    received_batches = [b for b in active_batches if b.get("status") == "received"]
+    assigned_batches = [b for b in active_batches if b.get("status") == "assigned"]
 
     inv_items = list(COLS["inventory"].find({"vendor_id": vendor_id}))
     min_stock = sum(float(i.get("minimumStock") or i.get("minimum_stock", 0)) for i in inv_items)
     if min_stock == 0:
         min_stock = 10.0
 
-    # If there are NO active received batches in store, stock is 0.0 kg (archived/completed batches do not count)
     if not received_batches:
-        total_qty = 0.0
         avg_freshness = 0.0
         oldest_batch_age_hrs = 0.0
-        # Sync inventory collection if stale
-        if inv_items and any(float(i.get("quantity", 0)) > 0 for i in inv_items):
-            COLS["inventory"].update_many(
-                {"vendor_id": vendor_id},
-                {"$set": {"quantity": 0.0, "last_updated": now}}
-            )
     else:
-        total_qty = sum(float(i.get("quantity", 0)) for i in inv_items)
         freshness_scores = [float(i.get("freshnessScore") or i.get("freshness_score", 0.8)) for i in inv_items]
         avg_freshness = round(sum(freshness_scores) / len(freshness_scores), 2) if (freshness_scores and total_qty > 0) else 0.0
         oldest_batch_age_hrs = 0.0
@@ -1641,7 +1648,7 @@ def get_inventory_summary():
         "totalQuantityKg": round(total_qty, 1),
         "minimumStockKg": round(min_stock, 1),
         "belowMinimum": total_qty < min_stock,
-        "isStockOut": total_qty <= 0 or len(received_batches) == 0,
+        "isStockOut": total_qty <= 0 or len(active_batches) == 0,
         "batchCount": batch_count,
         "receivedBatchCount": received_batch_count,
         "oldestBatchAgeHrs": oldest_batch_age_hrs,
@@ -1674,83 +1681,80 @@ def mutate_inventory():
         batch_id_created = None
 
         if action == "edit" or new_qty is not None:
-            target_qty = max(0.0, float(new_qty if new_qty is not None else delta))
-            log_msg = f"Admin edited inventory for {shop_name} (set to {target_qty} kg)"
-            mv_type, mv_qty = "edit", target_qty - current_total
+            return jsonify({"error": "Direct inventory editing is disabled. Stock is managed strictly via batches."}), 400
 
-            active_batches = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "received"}))
-            if target_qty == 0:
-                if active_batches:
-                    COLS["batches"].update_many(
-                        {"vendor_id": vendor_id, "status": "received"},
-                        {"$set": {"status": "stockout", "stocked_out_at": now, "remaining_volume_kg": 0.0}}
-                    )
-            else:
-                if not active_batches:
-                    # Create an active received batch representing this edited stock
-                    batch_id_created = (data.get("batch_id") or "").strip() or f"B{int(datetime.utcnow().timestamp()) % 100000:05d}"
-                    while COLS["batches"].find_one({"batch_id": batch_id_created}):
-                        batch_id_created = f"B{random.randint(10000, 99999)}"
-                    COLS["batches"].insert_one({
-                        "batch_id": batch_id_created,
-                        "batch_number": batch_id_created,
-                        "product_name": product_name,
-                        "manufacturer": "B2P Central Kitchen",
-                        "mfgTimestamp": now,
-                        "volume_kg": target_qty,
-                        "quantity_kg": target_qty,
-                        "initialPH": float(data.get("initialPH", 4.4)),
-                        "temperatureC": float(data.get("temperatureC", 26.5)),
-                        "humidityPct": float(data.get("humidityPct", 58.0)),
-                        "fermentationHours": float(data.get("fermentationHours", 8.0)),
-                        "notes": data.get("notes", f"Inventory set to {target_qty} kg for {shop_name}"),
-                        "vendor_id": vendor_id,
-                        "status": "received",
-                        "assignment_log": [{
-                            "vendor_id": vendor_id,
-                            "assigned_at": now,
-                            "assigned_by": "Admin"
-                        }],
-                        "assigned_at": now,
-                        "received_at": now,
-                        "received_notes": "Stocked via Admin Inventory Ledger",
-                        "created_at": now,
+        elif action in ["remove_batch", "remove_batches"]:
+            batch_ids_to_remove = data.get("batch_ids") or []
+            single_id = data.get("batch_id")
+            if single_id and single_id not in batch_ids_to_remove:
+                batch_ids_to_remove.append(single_id)
+
+            if not batch_ids_to_remove:
+                return jsonify({"error": "No batches specified to remove"}), 400
+
+            # Match and archive batches for this vendor
+            matched_batches = []
+            for bid in batch_ids_to_remove:
+                clean_id = str(bid).strip().lstrip("#")
+                b_doc = None
+                if ObjectId.is_valid(clean_id):
+                    b_doc = COLS["batches"].find_one({"_id": ObjectId(clean_id), "vendor_id": vendor_id})
+                if not b_doc:
+                    b_doc = COLS["batches"].find_one({
+                        "$or": [
+                            {"batch_id": clean_id},
+                            {"batch_number": clean_id},
+                            {"batch_id": f"#{clean_id}"},
+                            {"batch_number": f"#{clean_id}"}
+                        ],
+                        "vendor_id": vendor_id
                     })
-                else:
-                    latest = sorted(active_batches, key=lambda b: b.get("received_at") or b.get("created_at") or now, reverse=True)[0]
-                    batch_id_created = latest.get("batch_id")
-                    COLS["batches"].update_one(
-                        {"batch_id": latest["batch_id"]},
-                        {"$set": {"volume_kg": target_qty, "quantity_kg": target_qty}}
-                    )
+                if b_doc:
+                    matched_batches.append(b_doc)
 
-        elif action == "remove_batch":
-            target_qty = max(0.0, current_total - abs(delta))
-            log_msg = f"Admin removed stock for {shop_name} (-{abs(delta)} kg, total: {target_qty} kg)"
-            mv_type, mv_qty = "remove", -abs(delta)
+            if not matched_batches:
+                return jsonify({"error": "No matching active batches found for this vendor"}), 404
 
-            active_batches = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "received"}))
-            if target_qty == 0:
-                if active_batches:
-                    COLS["batches"].update_many(
-                        {"vendor_id": vendor_id, "status": "received"},
-                        {"$set": {"status": "stockout", "stocked_out_at": now, "remaining_volume_kg": 0.0}}
-                    )
-            elif active_batches:
-                latest = sorted(active_batches, key=lambda b: b.get("received_at") or b.get("created_at") or now, reverse=True)[0]
-                batch_id_created = latest.get("batch_id")
-                new_vol = max(0.0, float(latest.get("volume_kg", latest.get("quantity_kg", 0))) - abs(delta))
+            removed_ids = []
+            total_removed_kg = 0.0
+            for b in matched_batches:
+                b_ident = b.get("batch_id") or str(b.get("_id"))
+                vol = float(b.get("volume_kg", b.get("quantity_kg", 0.0)))
                 COLS["batches"].update_one(
-                    {"batch_id": latest["batch_id"]},
-                    {"$set": {"volume_kg": new_vol, "quantity_kg": new_vol}}
+                    {"_id": b["_id"]},
+                    {"$set": {
+                        "status": "archived",
+                        "archived_at": now,
+                        "archived_reason": "removed_by_admin"
+                    }}
+                )
+                removed_ids.append(b_ident)
+                total_removed_kg += vol
+                write_movement(
+                    vendor_id=vendor_id,
+                    product_id=PRODUCT_NAME_TO_ID.get(b.get("product_name", product_name), product_id),
+                    movement_type="remove",
+                    quantity=-vol,
+                    batch_id=b_ident,
+                    triggered_by="admin",
+                    notes=f"Batch #{b_ident} removed from {shop_name} by admin"
                 )
 
-        elif action == "add_batch":
-            target_qty = current_total + abs(delta)
-            log_msg = f"Admin added stock for {shop_name} (+{abs(delta)} kg, total: {target_qty} kg)"
-            mv_type, mv_qty = "add", abs(delta)
+            # Sync inventory strictly with remaining active batches
+            target_qty, _ = sync_vendor_inventory_with_batches(vendor_id)
+            log_msg = f"Admin removed {len(removed_ids)} batch(es) ({removed_ids}) totaling {total_removed_kg} kg from {shop_name}"
+            log_event("activity", "info", "Admin", log_msg, {"type": "vendor", "id": vendor_id, "name": shop_name})
 
-            # Check if user specified an existing unassigned batch from central kitchen
+            updated = list(COLS["inventory"].find({"vendor_id": vendor_id}))
+            return jsonify({
+                "ok": True,
+                "inventory": [jsonify_doc(i) for i in updated],
+                "totalQuantity": target_qty,
+                "removedBatches": removed_ids
+            })
+
+        elif action == "add_batch":
+            delta_val = abs(delta) if delta > 0 else 10.0
             specified_batch_id = (data.get("batch_id") or "").strip()
             existing_unassigned = None
             if specified_batch_id:
@@ -1760,26 +1764,25 @@ def mutate_inventory():
                     "$or": [{"vendor_id": None}, {"vendor_id": ""}, {"vendor_id": {"$exists": False}}]
                 })
 
+            active_batch_doc = None
             if existing_unassigned:
                 batch_id_created = existing_unassigned["batch_id"]
-                actual_vol = abs(delta) if delta > 0 else float(existing_unassigned.get("volume_kg", 15.0))
+                actual_vol = delta_val if delta_val > 0 else float(existing_unassigned.get("volume_kg", 15.0))
                 COLS["batches"].update_one(
                     {"batch_id": batch_id_created},
                     {
                         "$set": {
                             "vendor_id": vendor_id,
-                            "status": "received",
+                            "status": "assigned",
                             "assigned_at": now,
-                            "received_at": now,
                             "volume_kg": actual_vol,
                             "quantity_kg": actual_vol,
-                            "received_notes": "Stocked via Admin Inventory Ledger",
                         },
                         "$push": {"assignment_log": {"vendor_id": vendor_id, "assigned_at": now, "assigned_by": "Admin"}}
                     }
                 )
+                active_batch_doc = {**existing_unassigned, "vendor_id": vendor_id, "status": "assigned", "volume_kg": actual_vol, "quantity_kg": actual_vol}
             else:
-                # Create a fresh batch in COLS["batches"] for this vendor
                 batch_id_created = specified_batch_id or f"B{int(datetime.utcnow().timestamp()) % 100000:05d}"
                 while COLS["batches"].find_one({"batch_id": batch_id_created}):
                     batch_id_created = f"B{random.randint(10000, 99999)}"
@@ -1790,95 +1793,61 @@ def mutate_inventory():
                     "product_name": product_name,
                     "manufacturer": data.get("manufacturer", "B2P Central Kitchen"),
                     "mfgTimestamp": now,
-                    "volume_kg": abs(delta),
-                    "quantity_kg": abs(delta),
+                    "volume_kg": delta_val,
+                    "quantity_kg": delta_val,
                     "initialPH": float(data.get("initialPH", 4.4)),
                     "temperatureC": float(data.get("temperatureC", 26.5)),
                     "humidityPct": float(data.get("humidityPct", 58.0)),
                     "fermentationHours": float(data.get("fermentationHours", 8.0)),
-                    "notes": data.get("notes", f"Stocked via Admin Inventory Ledger for {shop_name}"),
+                    "notes": data.get("notes", f"Assigned to {shop_name}"),
                     "vendor_id": vendor_id,
-                    "status": "received",
+                    "status": "assigned",
                     "assignment_log": [{
                         "vendor_id": vendor_id,
                         "assigned_at": now,
                         "assigned_by": "Admin"
                     }],
                     "assigned_at": now,
-                    "received_at": now,
-                    "received_notes": "Stocked via Admin Inventory Ledger",
                     "created_at": now,
                 }
                 COLS["batches"].insert_one(batch_doc)
-        else:
-            target_qty = max(0.0, current_total + delta)
-            log_msg = f"Admin adjusted stock for {shop_name} ({delta:+} kg, total: {target_qty} kg)"
-            mv_type, mv_qty = "adjustment", delta
+                active_batch_doc = batch_doc
 
-        # Update or create vendor inventory record
-        inv_update_data = {
-            "quantity": target_qty,
-            "receivedAt": now,
-            "last_updated": now,
-        }
-        if batch_id_created:
-            inv_update_data["batch_number"] = batch_id_created
-            inv_update_data["freshnessScore"] = 0.95
-
-        if not inv_items:
-            inv_id = f"INV_{vendor_id}"
-            new_inv = {
-                "inventory_id": inv_id,
-                "vendor_id": vendor_id,
-                "product_name": product_name,
-                "quantity": target_qty,
-                "minimumStock": 5.0,
-                "freshnessScore": 0.95 if batch_id_created else 0.2,
-                "receivedAt": now,
-                "last_updated": now,
-            }
-            if batch_id_created:
-                new_inv["batch_number"] = batch_id_created
-            COLS["inventory"].insert_one(new_inv)
-        else:
-            primary_id = inv_items[0]["_id"]
-            COLS["inventory"].update_one(
-                {"_id": primary_id},
-                {"$set": inv_update_data}
+            target_qty, _ = sync_vendor_inventory_with_batches(vendor_id, new_batch=active_batch_doc)
+            log_msg = f"Admin added batch #{batch_id_created} ({delta_val} kg) assigned to {shop_name}"
+            write_movement(
+                vendor_id=vendor_id, product_id=product_id,
+                movement_type="add", quantity=delta_val,
+                batch_id=batch_id_created,
+                triggered_by="admin",
+                previous_qty=current_total, new_qty=target_qty,
+                notes=log_msg
             )
-            if len(inv_items) > 1:
-                other_ids = [i["_id"] for i in inv_items[1:]]
-                COLS["inventory"].delete_many({"_id": {"$in": other_ids}})
+            log_event("activity", "info", "Admin", log_msg, {"type": "vendor", "id": vendor_id, "name": shop_name})
 
-        # If stock is completely depleted, transition active received batches to stockout
-        if target_qty == 0:
-            COLS["batches"].update_many(
-                {"vendor_id": vendor_id, "status": "received"},
-                {"$set": {"status": "stockout", "stocked_out_at": now, "remaining_volume_kg": 0.0}}
-            )
+            updated = list(COLS["inventory"].find({"vendor_id": vendor_id}))
+            return jsonify({
+                "ok": True,
+                "inventory": [jsonify_doc(i) for i in updated],
+                "totalQuantity": target_qty,
+                "batch_id": batch_id_created
+            })
 
-        # Phase C: write inventory_movement event
-        write_movement(
-            vendor_id=vendor_id, product_id=product_id,
-            movement_type=mv_type if target_qty > 0 else "stockout", quantity=mv_qty,
-            batch_id=batch_id_created,
-            triggered_by="admin",
-            previous_qty=current_total, new_qty=target_qty,
-            notes=log_msg
-        )
-
-        log_event("activity", "info", "Admin", log_msg, {"type": "vendor", "id": vendor_id, "name": shop_name})
-
-        updated = list(COLS["inventory"].find({"vendor_id": vendor_id}))
-        return jsonify({
-            "ok": True,
-            "inventory": [jsonify_doc(i) for i in updated],
-            "totalQuantity": target_qty,
-            "batch_id": batch_id_created
-        })
+        else:
+            return jsonify({"error": f"Invalid action: {action}"}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 400
+
+
+
+@app.route("/api/inventory/remove-batches", methods=["POST", "PATCH"])
+@app.route("/api/batches/remove", methods=["POST"])
+def remove_batches_dedicated():
+    """Dedicated endpoint to remove assigned batches from a vendor."""
+    data = request.json or {}
+    data["action"] = "remove_batches"
+    return mutate_inventory()
 
 
 
