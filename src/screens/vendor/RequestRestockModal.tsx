@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  ScrollView,
 } from 'react-native';
 import { inventoryService } from '../../services/inventoryService';
 import { batchService } from '../../services/batchService';
