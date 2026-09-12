@@ -1,4 +1,4 @@
-export type BatchStatus = 'created' | 'assigned' | 'received' | 'stockout';
+export type BatchStatus = 'created' | 'assigned' | 'received' | 'stockout' | 'archived';
 
 export interface Batch {
   _id?: string;
@@ -22,6 +22,8 @@ export interface Batch {
   assigned_at?: string;
   received_at?: string;
   stocked_out_at?: string;
+  archived_at?: string;
+  archived_reason?: string;
   mfg_timestamp?: string;
   mfgTimestamp?: string;
 }
@@ -85,4 +87,23 @@ export interface RestockOrder {
   notes?: string;
   order_date?: string;
   created_at?: string;
+}
+
+export interface RestockRequest {
+  _id?: string;
+  request_id: string;
+  vendor_id: string;
+  vendor_name?: string;
+  product_name: string;
+  requested_quantity_kg: number;
+  requested_batch_id?: string;
+  current_stock_kg: number;
+  status: 'pending' | 'approved' | 'rejected';
+  notes?: string;
+  admin_notes?: string;
+  approved_at?: string;
+  rejected_at?: string;
+  created_at?: string;
+  linked_order_id?: string;
+  linked_batch_id?: string;
 }

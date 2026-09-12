@@ -18,6 +18,7 @@ import { predictionService } from '../../services/predictionService';
 import { InventorySummary } from '../../types/batch';
 import { VendorSpoilageResult } from '../../types/prediction';
 import { RequestRestockModal } from './RequestRestockModal';
+import { UpdateStockModal } from './UpdateStockModal';
 import { colors, typography } from '../../theme';
 
 export const VendorHomeScreen: React.FC = () => {
@@ -33,6 +34,7 @@ export const VendorHomeScreen: React.FC = () => {
   const [festivalNote, setFestivalNote] = useState<string>('');
   const [weatherNote, setWeatherNote] = useState<string>('');
   const [restockModalVisible, setRestockModalVisible] = useState(false);
+  const [updateStockVisible, setUpdateStockVisible] = useState(false);
 
   const loadData = async () => {
     if (!vendor_id) return;
@@ -359,12 +361,21 @@ export const VendorHomeScreen: React.FC = () => {
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={styles.tertiaryBtn}
-                onPress={() => navigation.navigate('My Batches')}
-              >
-                <Text style={styles.tertiaryBtnText}>Open My Batches Ledger →</Text>
-              </TouchableOpacity>
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.tertiaryBtn}
+                  onPress={() => setUpdateStockVisible(true)}
+                >
+                  <Text style={styles.tertiaryBtnText}>Update Stock →</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.tertiaryBtn}
+                  onPress={() => navigation.navigate('My Batches')}
+                >
+                  <Text style={styles.tertiaryBtnText}>Open My Batches Ledger →</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
           </View>
@@ -382,6 +393,21 @@ export const VendorHomeScreen: React.FC = () => {
         onSuccess={() => {
           setRestockModalVisible(false);
           loadData();
+        }}
+      />
+
+      <UpdateStockModal
+        visible={updateStockVisible}
+        vendorId={vendor_id || ''}
+        currentStock={currentStock}
+        minimumStock={inventorySummary?.minimumStockKg ?? 10}
+        onClose={() => setUpdateStockVisible(false)}
+        onSuccess={(result) => {
+          setUpdateStockVisible(false);
+          loadData();
+          if (result.below_minimum || result.is_stockout) {
+            setRestockModalVisible(true);
+          }
         }}
       />
     </SafeAreaView>
@@ -753,7 +779,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   tertiaryBtn: {
+    flex: 1,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1.5,
     borderColor: colors.inkCharcoal,

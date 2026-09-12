@@ -40,6 +40,12 @@ export const BatchStatusBadge: React.FC<BatchStatusBadgeProps> = ({ status }) =>
     textColor = colors.rustRed;
     dotColor = colors.rustRed;
     label = 'Stock Out';
+  } else if (normalized === 'archived') {
+    bg = colors.backgroundAlt;
+    borderColor = colors.borderLight;
+    textColor = colors.textMuted;
+    dotColor = colors.textMuted;
+    label = 'Archived';
   }
 
   return (

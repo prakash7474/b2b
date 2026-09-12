@@ -10,6 +10,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, typography, spacing } from '../../theme';
@@ -25,6 +26,8 @@ import {
 } from '../../components/ledger';
 import { inventoryService } from '../../services/inventoryService';
 import { vendorService } from '../../services/vendorService';
+import { batchService } from '../../services/batchService';
+import { RestockRequest, Batch } from '../../types/batch';
 
 export const AdminDashboardScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -35,16 +38,38 @@ export const AdminDashboardScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Requisitions action state
+  // Requisitions & Restock action state
   const [rejectingVendor, setRejectingVendor] = useState<any | null>(null);
+  const [rejectingRequest, setRejectingRequest] = useState<RestockRequest | null>(null);
+  const [fulfillingRequest, setFulfillingRequest] = useState<RestockRequest | null>(null);
+  const [availableCreatedBatches, setAvailableCreatedBatches] = useState<Batch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const [isFulfilling, setIsFulfilling] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [inspectingCert, setInspectingCert] = useState<any | null>(null);
+  const [restockRequests, setRestockRequests] = useState<RestockRequest[]>([]);
 
   const loadDashboard = async () => {
     try {
       setIsLoading(true);
-      const res = await inventoryService.getDashboardSummary();
-      setData(res);
+      const [res, restockRes] = await Promise.all([
+        inventoryService.getDashboardSummary().catch((err) => {
+          console.warn('getDashboardSummary error:', err);
+          return null;
+        }),
+        inventoryService.getRestockRequests({ status: 'pending' }).catch((err) => {
+          console.warn('getRestockRequests error:', err);
+          return [];
+        }),
+      ]);
+
+      if (res) setData(res);
+
+      const reqList = (Array.isArray(restockRes) && restockRes.length > 0)
+        ? restockRes
+        : (Array.isArray(res?.restockRequests) ? res.restockRequests : []);
+
+      setRestockRequests(reqList);
     } catch (err) {
       console.error('Failed to load dashboard summary:', err);
     } finally {
@@ -102,6 +127,56 @@ export const AdminDashboardScreen: React.FC = () => {
     } finally {
       setActionLoadingId(null);
       setRejectingVendor(null);
+    }
+  };
+
+  const handleStartFulfill = async (request: RestockRequest) => {
+    const reqId = request.request_id || request.linked_order_id;
+    try {
+      setActionLoadingId(reqId);
+      const batches = await batchService.getAvailableBatches();
+      setActionLoadingId(null);
+      if (!batches || batches.length === 0) {
+        Alert.alert(
+          'Cannot Fulfill Requisition',
+          'There are NO unassigned batches in the Created list in Central Kitchen inventory.\n\nOnly if an unassigned batch exists in the batch list can requisition requests be fulfilled. Please produce a new batch in the Batches tab first.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Create Batch →', onPress: () => navigation.navigate('Batches') }
+          ]
+        );
+        return;
+      }
+      setAvailableCreatedBatches(batches);
+      const match = request.requested_batch_id && batches.find(b => b.batch_id === request.requested_batch_id);
+      setSelectedBatchId(match ? match.batch_id : batches[0].batch_id);
+      setFulfillingRequest(request);
+    } catch (err: any) {
+      setActionLoadingId(null);
+      Alert.alert('Error', err?.message || 'Failed to check available kitchen batches.');
+    }
+  };
+
+  const handleConfirmFulfill = async () => {
+    if (!fulfillingRequest || !selectedBatchId) return;
+    setIsFulfilling(true);
+    const reqId = fulfillingRequest.request_id || fulfillingRequest.linked_order_id;
+    try {
+      const ok = await batchService.assignBatch(selectedBatchId, fulfillingRequest.vendor_id, reqId);
+      if (ok) {
+        setFulfillingRequest(null);
+        await loadDashboard();
+        Alert.alert(
+          'Requisition Fulfilled',
+          `Batch #${selectedBatchId} has been dispatched to ${fulfillingRequest.vendor_name || fulfillingRequest.vendor_id}!\n\nAny older active batch at this outlet has been archived.`
+        );
+      } else {
+        Alert.alert('Error', 'Failed to assign batch.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to assign batch.');
+    } finally {
+      setIsFulfilling(false);
     }
   };
 
@@ -211,8 +286,13 @@ export const AdminDashboardScreen: React.FC = () => {
               ) : (
                 <View>
                   <StatRow
-                    label="Current stock in B2P inventory"
-                    value={inventory.currentStockKg ?? 0}
+                    label="Central Kitchen (Unassigned)"
+                    value={inventory.centralStockKg ?? 0}
+                    unit="kg"
+                  />
+                  <StatRow
+                    label="Partner Stores (In Field)"
+                    value={inventory.partnerStockKg ?? inventory.currentStockKg ?? 0}
                     unit="kg"
                   />
                   <StatRow
@@ -409,6 +489,182 @@ export const AdminDashboardScreen: React.FC = () => {
             </View>
           )}
         </LedgerPanel>
+
+        {/* 4.4 Restock Requests Panel */}
+        <LedgerPanel
+          title="Restock Requests"
+          subtitle={`PENDING RESTOCK REQUESTS (${restockRequests.length})`}
+          noPadding
+        >
+          {isLoading ? (
+            <View style={{ padding: spacing.md }}>
+              <Skeleton height={48} style={{ marginBottom: 8 }} />
+              <Skeleton height={48} />
+            </View>
+          ) : restockRequests.length === 0 ? (
+            <EmptyState message="No pending restock requests" />
+          ) : (
+            <View style={styles.reqList}>
+              {restockRequests.map((request, index) => {
+                const isOperating = actionLoadingId === request.request_id;
+                return (
+                  <View
+                    key={request.request_id}
+                    style={[
+                      styles.reqRow,
+                      index % 2 === 1 && styles.rowAlt,
+                      isMobile && styles.reqRowMobile,
+                    ]}
+                  >
+                    <View style={styles.reqInfo}>
+                      <Text style={styles.reqShopName}>{request.vendor_name || request.vendor_id || 'Partner Shop'}</Text>
+                      <Text style={styles.reqDetails}>
+                        Product: {request.product_name} • Requested: {request.requested_quantity_kg} kg
+                      </Text>
+                      <Text style={styles.reqAddress}>
+                        Current Stock: {request.current_stock_kg ?? 0} kg • Notes: {request.notes || 'None'}
+                      </Text>
+                      <Text style={styles.reqAddress}>
+                        Requested At: {request.created_at ? new Date(request.created_at).toLocaleString() : 'Just now'}
+                      </Text>
+                      {request.requested_batch_id ? (
+                        <Text style={[styles.reqDetails, { color: colors.clayTerracotta, fontWeight: '700' }]}>
+                          Vendor Selected Batch: #{request.requested_batch_id}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.reqActions}>
+                      <AcceptButton
+                        label="Fulfill & Assign"
+                        onPress={() => handleStartFulfill(request)}
+                        isLoading={isOperating}
+                        disabled={isOperating}
+                      />
+                      <RejectButton
+                        label="Reject"
+                        onPress={() => setRejectingRequest(request)}
+                        disabled={isOperating}
+                      />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </LedgerPanel>
+
+        {/* Fulfill Requisition Modal - Assigns from Created list */}
+        <Modal
+          visible={!!fulfillingRequest}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFulfillingRequest(null)}
+        >
+          <TouchableWithoutFeedback onPress={() => setFulfillingRequest(null)}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.fulfillModalBox}>
+                  <View style={styles.fulfillHeader}>
+                    <Text style={styles.modalTitle}>Fulfill Requisition & Dispatch</Text>
+                    <Text style={styles.fulfillSub}>
+                      Partner: {fulfillingRequest?.vendor_name || fulfillingRequest?.vendor_id} • Requested: {fulfillingRequest?.requested_quantity_kg} kg {fulfillingRequest?.product_name}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.fulfillSectionTitle}>
+                    Select Created Batch to Assign ({availableCreatedBatches.length} Available):
+                  </Text>
+
+                  <ScrollView style={styles.fulfillBatchList} showsVerticalScrollIndicator={false}>
+                    {availableCreatedBatches.map((b) => {
+                      const isSel = selectedBatchId === b.batch_id;
+                      const isVendorPref = fulfillingRequest?.requested_batch_id === b.batch_id;
+                      return (
+                        <TouchableOpacity
+                          key={b.batch_id}
+                          style={[
+                            styles.fulfillBatchCard,
+                            isSel && styles.fulfillBatchCardActive,
+                          ]}
+                          onPress={() => setSelectedBatchId(b.batch_id)}
+                        >
+                          <View style={styles.fulfillCardRow}>
+                            <Text style={[styles.fulfillCardId, isSel && styles.fulfillCardIdActive]}>
+                              #{b.batch_id}
+                            </Text>
+                            <View style={styles.fulfillCardBadgeRow}>
+                              {isVendorPref && (
+                                <View style={styles.prefBadge}>
+                                  <Text style={styles.prefBadgeText}>Vendor Choice</Text>
+                                </View>
+                              )}
+                              <Text style={[styles.fulfillCardVol, isSel && styles.fulfillCardVolActive]}>
+                                {b.volume_kg || b.quantity_kg || 15} kg
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.fulfillCardSub}>
+                            pH: {b.initialPH ?? 4.4} • Temp: {b.temperatureC ?? 26}°C • {b.manufacturer || 'B2P Central Kitchen'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <Text style={styles.fulfillArchiveNotice}>
+                    * Assigning this batch automatically archives any older active batch at the shop so it moves to log history and does not affect spoilage predictions.
+                  </Text>
+
+                  <View style={styles.fulfillActions}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={() => setFulfillingRequest(null)}
+                      disabled={isFulfilling}
+                    >
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.fulfillConfirmBtn, isFulfilling && { opacity: 0.6 }]}
+                      onPress={handleConfirmFulfill}
+                      disabled={isFulfilling || !selectedBatchId}
+                    >
+                      <Text style={styles.fulfillConfirmText}>
+                        {isFulfilling ? 'Assigning...' : 'Assign & Dispatch Batch →'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+
+        {/* Restock Rejection Confirmation Dialog */}
+        <ConfirmDialog
+          visible={!!rejectingRequest}
+          title="Reject Restock Request"
+          message={`Reject restock requisition of ${rejectingRequest?.requested_quantity_kg} kg ${rejectingRequest?.product_name} for ${rejectingRequest?.vendor_name || rejectingRequest?.vendor_id}?`}
+          confirmLabel="Reject Request"
+          cancelLabel="Keep Pending"
+          isDestructive
+          onConfirm={async () => {
+            if (!rejectingRequest) return;
+            const reqId = rejectingRequest.request_id || rejectingRequest.linked_order_id;
+            try {
+              setActionLoadingId(reqId);
+              await inventoryService.rejectRestockRequest(reqId, 'Rejected by Admin');
+              setRejectingRequest(null);
+              await loadDashboard();
+            } catch (e: any) {
+              Alert.alert('Error', e?.response?.data?.error || 'Failed to reject request');
+            } finally {
+              setActionLoadingId(null);
+            }
+          }}
+          onCancel={() => setRejectingRequest(null)}
+        />
 
         {/* Rejection Confirmation Dialog */}
         <ConfirmDialog
@@ -808,5 +1064,133 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.inkCharcoal,
+  },
+  fulfillModalBox: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '85%',
+    backgroundColor: colors.paperWhite,
+    borderWidth: 1.5,
+    borderTopWidth: 2.5,
+    borderColor: colors.inkCharcoal,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  fulfillHeader: {
+    marginBottom: spacing.xs,
+  },
+  fulfillSub: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  fulfillSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.inkCharcoal,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  fulfillBatchList: {
+    maxHeight: 220,
+    marginVertical: spacing.xs,
+  },
+  fulfillBatchCard: {
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.sm,
+    backgroundColor: colors.backgroundAlt,
+    marginBottom: spacing.xs,
+  },
+  fulfillBatchCardActive: {
+    borderColor: colors.clayTerracotta,
+    backgroundColor: colors.paperWhite,
+    borderWidth: 1.5,
+  },
+  fulfillCardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  fulfillCardId: {
+    fontFamily: typography.mono,
+    fontWeight: '700',
+    fontSize: 13,
+    color: colors.inkCharcoal,
+  },
+  fulfillCardIdActive: {
+    color: colors.clayTerracotta,
+  },
+  fulfillCardBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  prefBadge: {
+    backgroundColor: colors.bananaGreen,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  prefBadgeText: {
+    color: colors.paperWhite,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  fulfillCardVol: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.inkCharcoal,
+  },
+  fulfillCardVolActive: {
+    color: colors.clayTerracotta,
+  },
+  fulfillCardSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 3,
+  },
+  fulfillArchiveNotice: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginVertical: spacing.xs,
+    lineHeight: 15,
+  },
+  fulfillActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  cancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  fulfillConfirmBtn: {
+    backgroundColor: colors.clayTerracotta,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.inkCharcoal,
+  },
+  fulfillConfirmText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.paperWhite,
   },
 });

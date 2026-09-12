@@ -16,7 +16,7 @@ interface BatchState {
   fetchBatches: (vendorId?: string, status?: string) => Promise<void>;
   fetchInventory: () => Promise<void>;
   addBatch: (data: CreateBatchInput) => Promise<boolean>;
-  assignBatch: (batchId: string, vendorId: string) => Promise<boolean>;
+  assignBatch: (batchId: string, vendorId: string, restockRequestId?: string) => Promise<boolean>;
   receiveBatch: (batchId: string, notes?: string) => Promise<boolean>;
   stockoutBatch: (batchId: string) => Promise<boolean>;
   removeBatch: (batchId: string) => Promise<boolean>;
@@ -73,10 +73,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     }
   },
 
-  assignBatch: async (batchId: string, vendorId: string) => {
+  assignBatch: async (batchId: string, vendorId: string, restockRequestId?: string) => {
     try {
       set({ isLoading: true, error: null });
-      await batchService.assignBatch(batchId, vendorId);
+      await batchService.assignBatch(batchId, vendorId, restockRequestId);
       await get().fetchBatches();
       return true;
     } catch (err: any) {

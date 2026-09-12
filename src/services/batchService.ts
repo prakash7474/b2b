@@ -12,10 +12,16 @@ export const batchService = {
     return res.data;
   },
 
-  async assignBatch(batchId: string, vendorId: string): Promise<{ ok: boolean }> {
+  async assignBatch(batchId: string, vendorId: string, restockRequestId?: string): Promise<{ ok: boolean }> {
     const res = await api.put<{ ok: boolean }>(`/api/batches/${encodeURIComponent(batchId)}/assign`, {
       vendor_id: vendorId,
+      restock_request_id: restockRequestId,
     });
+    return res.data;
+  },
+
+  async getAvailableBatches(): Promise<Batch[]> {
+    const res = await api.get<Batch[]>('/api/batches/available');
     return res.data;
   },
 
@@ -53,6 +59,11 @@ export const batchService = {
       `/api/batches/${encodeURIComponent(batchId)}/report-issue`,
       { issue_type: issueType, description }
     );
+    return res.data;
+  },
+
+  async getVendorBatchHistory(vendorId: string): Promise<Batch[]> {
+    const res = await api.get<Batch[]>(`/api/vendors/${encodeURIComponent(vendorId)}/batch-history`);
     return res.data;
   },
 };
