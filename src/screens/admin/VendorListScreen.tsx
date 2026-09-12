@@ -54,23 +54,33 @@ export const VendorListScreen: React.FC = () => {
   };
 
   const handlePredictDemand = async (vendor: Vendor) => {
-    const id = vendor.vendor_id;
+    const id = vendor?.vendor_id;
+    if (!id) return;
+
     setPredictions((prev) => ({
       ...prev,
-      [id]: { demandKg: 0, loading: true },
+      [id]: { demandKg: prev[id]?.demandKg ?? (vendor.hotspotDensityScore || 30), loading: true },
     }));
 
     try {
       const res = await predictionService.getVendorDemandForecast(id);
-      const demand = res?.predictedDemand ?? Math.round(15 + (vendor.hotspotDensityScore || 30) * 0.3);
+      const rawVal = res?.predictedDemand ?? (res as any)?.predicted_demand_kg;
+      const demand = (typeof rawVal === 'number' && !isNaN(rawVal))
+        ? Math.round(rawVal * 10) / 10
+        : Math.round(15 + (vendor.hotspotDensityScore || 30) * 0.3);
+
       setPredictions((prev) => ({
         ...prev,
         [id]: { demandKg: demand, loading: false },
       }));
-    } catch (err) {
+    } catch (err: any) {
       setPredictions((prev) => ({
         ...prev,
-        [id]: { demandKg: 0, loading: false, error: "Couldn't get prediction — try again" },
+        [id]: {
+          demandKg: prev[id]?.demandKg ?? 0,
+          loading: false,
+          error: err?.response?.data?.error || "Couldn't get prediction — try again",
+        },
       }));
     }
   };
@@ -101,8 +111,8 @@ export const VendorListScreen: React.FC = () => {
       return (b.batch_count || 0) - (a.batch_count || 0);
     }
     // Default: by predicted demand descending
-    const predA = predictions[a.vendor_id]?.demandKg ?? (a.hotspotDensityScore || 30);
-    const predB = predictions[b.vendor_id]?.demandKg ?? (b.hotspotDensityScore || 30);
+    const predA = Number(predictions[a.vendor_id]?.demandKg) || (a.hotspotDensityScore || 30);
+    const predB = Number(predictions[b.vendor_id]?.demandKg) || (b.hotspotDensityScore || 30);
     return predB - predA;
   });
 
@@ -223,7 +233,7 @@ export const VendorListScreen: React.FC = () => {
                             <Text style={styles.retryLinkText}>Retry</Text>
                           </TouchableOpacity>
                         </View>
-                      ) : predState?.demandKg !== undefined ? (
+                      ) : predState && !predState.loading && typeof predState.demandKg === 'number' && predState.demandKg > 0 ? (
                         <View style={styles.inlinePredBoxSuccess}>
                           <View>
                             <Text style={styles.predSuccessLabel}>ML Demand Projection</Text>
@@ -244,7 +254,7 @@ export const VendorListScreen: React.FC = () => {
                       {/* Card Action Buttons */}
                       <View style={styles.cardActions}>
                         <PrimaryButton
-                          label={predState?.demandKg !== undefined ? 'Re-predict' : 'Predict Demand'}
+                          label={predState && predState.demandKg > 0 && !predState.loading ? 'Re-predict' : 'Predict Demand'}
                           onPress={() => handlePredictDemand(vendor)}
                           isLoading={predState?.loading}
                           size="sm"

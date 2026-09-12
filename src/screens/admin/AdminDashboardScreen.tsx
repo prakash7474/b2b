@@ -48,10 +48,12 @@ export const AdminDashboardScreen: React.FC = () => {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [inspectingCert, setInspectingCert] = useState<any | null>(null);
   const [restockRequests, setRestockRequests] = useState<RestockRequest[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadDashboard = async () => {
     try {
       setIsLoading(true);
+      setLoadError(null);
       const [res, restockRes] = await Promise.all([
         inventoryService.getDashboardSummary().catch((err) => {
           console.warn('getDashboardSummary error:', err);
@@ -63,15 +65,21 @@ export const AdminDashboardScreen: React.FC = () => {
         }),
       ]);
 
-      if (res) setData(res);
+      if (res) {
+        setData(res);
+        setLoadError(null);
+      } else {
+        setLoadError('Telemetry ledger connection timed out or is unavailable.');
+      }
 
       const reqList = (Array.isArray(restockRes) && restockRes.length > 0)
         ? restockRes
         : (Array.isArray(res?.restockRequests) ? res.restockRequests : []);
 
       setRestockRequests(reqList);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load dashboard summary:', err);
+      setLoadError(err?.message || 'Failed to connect to backend server');
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -131,9 +139,9 @@ export const AdminDashboardScreen: React.FC = () => {
   };
 
   const handleStartFulfill = async (request: RestockRequest) => {
-    const reqId = request.request_id || request.linked_order_id;
+    const reqId = request.request_id || request.linked_order_id || '';
     try {
-      setActionLoadingId(reqId);
+      setActionLoadingId(reqId || null);
       const batches = await batchService.getAvailableBatches();
       setActionLoadingId(null);
       if (!batches || batches.length === 0) {
@@ -210,6 +218,17 @@ export const AdminDashboardScreen: React.FC = () => {
           <Text style={styles.headerSub}>CENTRAL KITCHEN COMMAND</Text>
           <Text style={styles.headerTitle}>Operations Ledger</Text>
         </View>
+
+        {loadError && !data ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>
+              Telemetry ledger sync delayed ({loadError})
+            </Text>
+            <TouchableOpacity style={styles.errorBannerBtn} onPress={loadDashboard}>
+              <Text style={styles.errorBannerBtnText}>↺ Re-sync Ledger</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* 4.1 Top Row: Two Ledger Panels Side by Side (Stacked on mobile) */}
         <View style={[styles.topRow, isMobile && styles.topRowMobile]}>
@@ -651,7 +670,8 @@ export const AdminDashboardScreen: React.FC = () => {
           isDestructive
           onConfirm={async () => {
             if (!rejectingRequest) return;
-            const reqId = rejectingRequest.request_id || rejectingRequest.linked_order_id;
+            const reqId = rejectingRequest.request_id || rejectingRequest.linked_order_id || '';
+            if (!reqId) return;
             try {
               setActionLoadingId(reqId);
               await inventoryService.rejectRestockRequest(reqId, 'Rejected by Admin');
@@ -748,6 +768,38 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.inkCharcoal,
     fontFamily: typography.heading,
+  },
+  errorBanner: {
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1.5,
+    borderTopWidth: 2.5,
+    borderColor: colors.rustRed,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    marginBottom: spacing.md,
+    borderRadius: radius.sm,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  errorBannerText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: colors.rustRed,
+    flex: 1,
+  },
+  errorBannerBtn: {
+    backgroundColor: colors.rustRed,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+  },
+  errorBannerBtnText: {
+    color: colors.paperWhite,
+    fontSize: 12,
+    fontWeight: '700',
   },
   topRow: {
     flexDirection: 'row',

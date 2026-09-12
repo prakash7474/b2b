@@ -395,11 +395,12 @@ def parse_date(val):
     return datetime.utcnow()
 
 
-def compute_sales_features(vendor_id, product_name, target_date, window):
+def compute_sales_features(vendor_id, product_name, target_date, window, prefetched=None):
     """Compute ML demand features from actual order history in the database.
     
     Returns a dict with all 17 features for the XGBoost demand model.
     Based on B2P_ML_Parameter_Lists_2Pages.html Layer 1 specs.
+    Optionally accepts a `prefetched` dict for high-throughput batch execution.
     """
     now = datetime.utcnow()
     hour = 7 if window == "morning" else 17
@@ -413,7 +414,10 @@ def compute_sales_features(vendor_id, product_name, target_date, window):
     is_weekend = 1 if weekday >= 5 else 0
     
     # ── Get vendor data ──
-    vendor = COLS["vendors"].find_one({"vendor_id": vendor_id})
+    if prefetched and "vendors_by_id" in prefetched:
+        vendor = prefetched["vendors_by_id"].get(vendor_id)
+    else:
+        vendor = COLS["vendors"].find_one({"vendor_id": vendor_id})
     locality = vendor.get("localityTier", "residential_budget") if vendor else "residential_budget"
     hotspot = vendor.get("hotspotDensityScore", 30) if vendor else 30
     vendor_rating = vendor.get("rating", 4.0) if vendor else 4.0
@@ -422,25 +426,35 @@ def compute_sales_features(vendor_id, product_name, target_date, window):
     product_id = PRODUCT_NAME_TO_ID.get(product_name, product_name)
     
     # ── Sales History: query ORDER_ITEMS + ORDERS for this vendor ──
-    vendor_orders = list(COLS["orders"].find(
-        {"vendor_id": vendor_id},
-        {"order_id": 1, "order_date": 1}
-    ).sort("order_date", -1).limit(100))
+    if prefetched and "orders_by_vendor" in prefetched:
+        vendor_orders = prefetched["orders_by_vendor"].get(vendor_id, [])
+    else:
+        vendor_orders = list(COLS["orders"].find(
+            {"vendor_id": vendor_id},
+            {"order_id": 1, "order_date": 1}
+        ).sort("order_date", -1).limit(100))
 
-    # Get order items to compute actual units sold for the TARGET product.
-    # order_items links to inventory via inventory_id; inventory carries
-    # product_name, so we resolve each line item to a product and only count
-    # units that belong to the requested product (not all products).
-    order_ids = [o["order_id"] for o in vendor_orders]
-    inv_by_id = {
-        i["inventory_id"]: i.get("product_name")
-        for i in COLS["inventory"].find({"vendor_id": vendor_id})
-        if i.get("inventory_id")
-    }
-    vendor_items = list(COLS["order_items"].find(
-        {"order_id": {"$in": order_ids}} if order_ids else {},
-        {"order_id": 1, "inventory_id": 1, "quantity": 1}
-    ))
+    if prefetched and "inv_by_vendor" in prefetched:
+        v_inv = prefetched["inv_by_vendor"].get(vendor_id, [])
+        inv_by_id = {i["inventory_id"]: i.get("product_name") for i in v_inv if i.get("inventory_id")}
+    else:
+        inv_by_id = {
+            i["inventory_id"]: i.get("product_name")
+            for i in COLS["inventory"].find({"vendor_id": vendor_id})
+            if i.get("inventory_id")
+        }
+
+    if prefetched and "order_items_by_order" in prefetched:
+        order_ids = [o["order_id"] for o in vendor_orders]
+        vendor_items = []
+        for oid in order_ids:
+            vendor_items.extend(prefetched["order_items_by_order"].get(oid, []))
+    else:
+        order_ids = [o["order_id"] for o in vendor_orders]
+        vendor_items = list(COLS["order_items"].find(
+            {"order_id": {"$in": order_ids}} if order_ids else {},
+            {"order_id": 1, "inventory_id": 1, "quantity": 1}
+        ))
 
     # Map order_id → total units sold (scoped to the target product)
     order_units = {}
@@ -492,18 +506,31 @@ def compute_sales_features(vendor_id, product_name, target_date, window):
     recent_trend = rolling7_mean / rolling28_mean if rolling28_mean > 0 else 1.0
     
     # ── Current stock level (from INVENTORY, verified against active received batches) ──
-    active_received = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "received"}))
+    if prefetched and "received_by_vendor" in prefetched:
+        active_received = prefetched["received_by_vendor"].get(vendor_id, [])
+    else:
+        active_received = list(COLS["batches"].find({"vendor_id": vendor_id, "status": "received"}))
+
     if not active_received:
         available_stock = 0.0
     else:
-        inv_items = list(COLS["inventory"].find({"vendor_id": vendor_id}))
+        if prefetched and "inv_by_vendor" in prefetched:
+            inv_items = prefetched["inv_by_vendor"].get(vendor_id, [])
+        else:
+            inv_items = list(COLS["inventory"].find({"vendor_id": vendor_id}))
         available_stock = sum(float(i.get("quantity", 0)) for i in inv_items)
 
     # ── Weather: read from weather_forecast collection (Chennai seasonal fallback) ──
-    temperature, rain_prob = get_weather_for_date(target_date)
+    if prefetched and "weather" in prefetched:
+        temperature, rain_prob = prefetched["weather"]
+    else:
+        temperature, rain_prob = get_weather_for_date(target_date)
 
     # ── Festival context: read from festival_calendar collection ──
-    is_festival, festival_type = get_festival_context(target_date)
+    if prefetched and "festival" in prefetched:
+        is_festival, festival_type = prefetched["festival"]
+    else:
+        is_festival, festival_type = get_festival_context(target_date)
 
 
     feature_dict = {
@@ -683,15 +710,52 @@ def dashboard():
 
     # Pre-fetch active vendors & build dictionary for instant in-memory lookups
     active_vendors_list = list(vendors_col.find({"verificationStatus": "active"}))
+    vids = [v.get("vendor_id") for v in active_vendors_list if v.get("vendor_id")]
     vendors_by_id = {v.get("vendor_id"): v for v in active_vendors_list}
 
-    # Compute live predictions and spike percentages for active vendors (executed once per vendor)
+    # Bulk pre-fetch analytical datasets for all active vendors in 3 single round-trips
+    weather_curr = get_weather_for_date(now)
+    festival_curr = get_festival_context(now)
+
+    all_active_inv = list(inventory_col.find({"vendor_id": {"$in": vids}})) if vids else []
+    inv_by_vendor = {}
+    for item in all_active_inv:
+        inv_by_vendor.setdefault(item.get("vendor_id"), []).append(item)
+
+    all_received_batches = list(batches_col.find({"vendor_id": {"$in": vids}, "status": "received"})) if vids else []
+    received_by_vendor = {}
+    for b in all_received_batches:
+        received_by_vendor.setdefault(b.get("vendor_id"), []).append(b)
+
+    orders_limit = list(orders_col.find({"vendor_id": {"$in": vids}}).sort("order_date", -1).limit(400)) if vids else []
+    orders_by_vendor = {}
+    all_order_ids = []
+    for o in orders_limit:
+        orders_by_vendor.setdefault(o.get("vendor_id"), []).append(o)
+        all_order_ids.append(o.get("order_id"))
+
+    order_items_by_order = {}
+    if all_order_ids:
+        for it in COLS["order_items"].find({"order_id": {"$in": all_order_ids}}, {"order_id": 1, "inventory_id": 1, "quantity": 1}):
+            order_items_by_order.setdefault(it.get("order_id"), []).append(it)
+
+    prefetched_context = {
+        "vendors_by_id": vendors_by_id,
+        "orders_by_vendor": orders_by_vendor,
+        "inv_by_vendor": inv_by_vendor,
+        "order_items_by_order": order_items_by_order,
+        "received_by_vendor": received_by_vendor,
+        "weather": weather_curr,
+        "festival": festival_curr,
+    }
+
+    # Compute live predictions and spike percentages for active vendors in microseconds
     vendor_predictions = {}
     top_spike_candidates = []
     for v in active_vendors_list:
         v_id = v.get("vendor_id")
         try:
-            feat_dict, avail_stock, _ = compute_sales_features(v_id, "Idli Batter", now, "morning")
+            feat_dict, avail_stock, _ = compute_sales_features(v_id, "Idli Batter", now, "morning", prefetched=prefetched_context)
             row_df = pd.DataFrame([feat_dict])[demand_features]
             v_pred = max(0.0, round(float(demand_model.predict(row_df)[0]), 1))
             vendor_predictions[v_id] = v_pred
@@ -711,6 +775,19 @@ def dashboard():
     total_active_pred = sum(vendor_predictions.values()) or 45.0
 
     # 7-day demand trend (combines real order sales + ML forecast with festival/day-of-week modulation)
+    fest_start = now - timedelta(days=9)
+    fest_end = now + timedelta(days=3)
+    fest_list = list(COLS["festival_calendar"].find({"date": {"$gte": fest_start, "$lte": fest_end}}))
+
+    def _is_fest_window(d):
+        d_start = d - timedelta(days=2)
+        d_end = d + timedelta(days=2, hours=23, minutes=59)
+        for f in fest_list:
+            f_date = f.get("date")
+            if f_date and d_start <= f_date <= d_end:
+                return True
+        return False
+
     for i in range(7):
         day = now - timedelta(days=6 - i)
         d_key = day.strftime("%Y-%m-%d")
@@ -718,7 +795,7 @@ def dashboard():
 
         weekday_idx = day.weekday()
         wk_factor = 1.15 if weekday_idx in (5, 6) else (0.92 if weekday_idx == 0 else 1.0)
-        is_fest, _ = get_festival_context(day)
+        is_fest = _is_fest_window(day)
         fest_factor = 1.25 if is_fest else 1.0
         pred_val = round(total_active_pred * wk_factor * fest_factor, 1)
 
