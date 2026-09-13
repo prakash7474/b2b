@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["app.py"]
+omit = ["tests/*", ".expo/*", "node_modules/*"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__",
+    "raise NotImplementedError",
+]

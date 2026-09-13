@@ -181,7 +181,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // Clears storage, invalidates session, resets all state variables
   logout: async () => {
     set({ isLoading: true });
-    await authService.logout();
+    try {
+      await authService.logout();
+    } catch {
+      // Best effort — clear local state even if backend call fails
+    }
     set({
       token: null,
       role: null,

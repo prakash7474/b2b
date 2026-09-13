@@ -4,14 +4,9 @@ Unit tests for token-based authentication (Option B) in app.py.
 
 import unittest
 import os
-import importlib.util
 from unittest.mock import patch
 
-# Load root app.py explicitly to avoid collision with app/ package
-app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app.py"))
-spec = importlib.util.spec_from_file_location("flask_app", app_path)
-flask_app = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(flask_app)
+import flask_app
 
 app = flask_app.app
 auth_serializer = flask_app.auth_serializer

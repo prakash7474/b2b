@@ -361,12 +361,13 @@ export const AdminDashboardScreen: React.FC = () => {
                   {(() => {
                     const maxVal = Math.max(
                       1,
-                      ...demandTrends.map((d: any) => Math.max(Number(d.predicted) || 0, Number(d.actual) || 0, 40))
+                      ...demandTrends.map((d: any) => Math.max(Number(d.predicted) || 0, d.actual != null ? Number(d.actual) : 0, 40))
                     );
                     const MAX_BAR_HEIGHT = 44;
                     return demandTrends.map((d: any, idx: number) => {
                       const predH = Math.max(4, Math.round(((Number(d.predicted) || 0) / maxVal) * MAX_BAR_HEIGHT));
-                      const actH = Math.max(4, Math.round(((Number(d.actual) || 0) / maxVal) * MAX_BAR_HEIGHT));
+                      const hasActual = d.actual != null && Number(d.actual) > 0;
+                      const actH = hasActual ? Math.max(4, Math.round(((Number(d.actual) || 0) / maxVal) * MAX_BAR_HEIGHT)) : 0;
                       return (
                         <View key={idx} style={styles.chartCol}>
                           <View style={styles.barPair}>
@@ -376,12 +377,16 @@ export const AdminDashboardScreen: React.FC = () => {
                                 { height: predH },
                               ]}
                             />
-                            <View
-                              style={[
-                                styles.actBar,
-                                { height: actH },
-                              ]}
-                            />
+                            {hasActual ? (
+                              <View
+                                style={[
+                                  styles.actBar,
+                                  { height: actH },
+                                ]}
+                              />
+                            ) : (
+                              <View style={[styles.actBar, { height: 4, opacity: 0.2 }]} />
+                            )}
                           </View>
                           <Text style={styles.chartDayText}>{d.day}</Text>
                         </View>
