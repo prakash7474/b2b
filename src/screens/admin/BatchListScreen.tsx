@@ -1,3 +1,18 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN BATCHES MANAGEMENT SCREEN (BatchListScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Production Batch Registry: Displays all batter batches created by Central Kitchen.
+//   2. Status Tabs Filtering:
+//      - "All Batches" : Shows all non-archived batches.
+//      - "Created"     : Fresh batches produced at central kitchen, ready for dispatch.
+//      - "Assigned"    : Batches dispatched to a partner shop outlet.
+//      - "Received"    : Batches physically received and stocked at the vendor's shop.
+//      - "Archived"    : Historical, consumed, or replaced batches.
+//   3. Actions:
+//      - "Manufacture New Batch": Form with biological parameters (pH, temp, fermentation).
+//      - "Assign to Shop": Modal to assign an available batch to any active vendor.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
@@ -41,6 +56,8 @@ export const BatchListScreen: React.FC = () => {
   const { batches, fetchBatches, addBatch, assignBatch, receiveBatch, removeBatch, isLoading } = useBatchStore();
   const { vendors, fetchVendors } = useVendorStore();
 
+  // ── Filter State ─────────────────────────────────────────────────────────
+  // Controls which batch category tab is currently active
   const [statusFilter, setStatusFilter] = useState<BatchStatus | 'all' | 'archived'>('all');
   const [assigningBatch, setAssigningBatch] = useState<Batch | null>(null);
   const [detailBatch, setDetailBatch] = useState<Batch | null>(null);
@@ -48,7 +65,8 @@ export const BatchListScreen: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [receivingBatchId, setReceivingBatchId] = useState<string | null>(null);
 
-  // New Batch Modal State
+  // ── Manufacture New Batch Modal Form State ──────────────────────────────
+  // Default fresh batter values: pH 4.40, temp 26.5C, fermentation 8.0h
   const [showAddModal, setShowAddModal] = useState(false);
   const [newBatchId, setNewBatchId] = useState('');
   const [newVolumeKg, setNewVolumeKg] = useState('15.0');

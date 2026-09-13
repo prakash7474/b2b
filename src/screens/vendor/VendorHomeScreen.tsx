@@ -1,3 +1,20 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR SHOP HOME DASHBOARD (VendorHomeScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Vendor's Daily Control Center: Displays the vendor shop's live status.
+//   2. Real-Time Stock (Card 03):
+//      - Current available kg derived from received & assigned batches.
+//      - "Update Stock" button: Allows shopkeeper to record remaining batter.
+//   3. AI Demand & Dispatch (Card 02):
+//      - ML predicted demand for next consumption window.
+//      - Restock advice (e.g. "Order +10 kg" or "Sufficient Stock").
+//   4. Spoilage Risk Warning (Card 04):
+//      - Freshness evaluation of batter in store.
+//      - Temperature, storage condition, and hours remaining until expiry.
+//   5. Quick Restock Action:
+//      - "Request Fresh Stock" modal submits direct requisition to Central Kitchen.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -36,6 +53,7 @@ export const VendorHomeScreen: React.FC = () => {
   const [restockModalVisible, setRestockModalVisible] = useState(false);
   const [updateStockVisible, setUpdateStockVisible] = useState(false);
 
+  // ── Load All Vendor Data & ML Forecasts ──────────────────────────────────
   const loadData = async () => {
     if (!vendor_id) return;
     try {
@@ -90,12 +108,16 @@ export const VendorHomeScreen: React.FC = () => {
     setRefreshing(false);
   };
 
+  // ── Key Derived Metrics & Decision Formulas ──────────────────────────────
+  // 👉 CHANGE HERE IF INSTRUCTOR ASKS ABOUT STOCKOUT OR RESTOCK LOGIC:
   const currentStock = inventorySummary?.totalQuantityKg ?? vendorForecast?.availableStock ?? 0;
-  const isStockOut = currentStock <= 0;
+  const isStockOut = currentStock <= 0; // True if shop has 0 kg batter remaining
   const predictedDemand = vendorForecast?.predictedDemand ?? 15.0;
+  // Recommended dispatch is the shortfall: max(0, predicted - current)
   const recommendedDispatch = vendorForecast?.recommendedDispatch ?? Math.max(0, Math.round((predictedDemand - currentStock) * 10) / 10);
   const isRestockNeeded = currentStock < predictedDemand;
 
+  // Spoilage risk evaluation for in-store stock
   const isSpoilageStockOut = isStockOut || !!spoilageResult?.isStockOut || spoilageResult?.riskLabel === 'None';
   const riskLabel = isSpoilageStockOut ? 'None' : (spoilageResult?.riskLabel || 'Low');
   const riskColor = isSpoilageStockOut

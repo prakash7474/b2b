@@ -1,9 +1,33 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 AUTHENTICATION STATE STORE (src/store/authStore.ts)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This is the central state management store for User Authentication.
+//    It is built using "Zustand" (a fast, lightweight React state manager).
+//
+//    What it stores:
+//    - `token`: The secret JWT bearer token returned by Flask backend.
+//    - `role`: Whether the logged-in user is 'admin' or 'vendor'.
+//    - `vendor_id` & `shop_name`: If vendor is logged in, tracks which shop they own.
+//    - `isAuthenticated`: Boolean flag telling RoleRouter whether to show login or app.
+//    - `isLoading`: Shows loading spinner while checking saved credentials.
+//
+//    Key Methods:
+//    1. `checkAuth()`: Checks phone storage (AsyncStorage) on app startup so users
+//                     stay logged in even after closing the app.
+//    2. `loginAdmin(user, pass)`: Authenticates Central Kitchen Admin with backend.
+//    3. `loginVendor(vendorId)`: Logs in a vendor by their ID (e.g. "V001").
+//    4. `logout()`: Clears tokens from memory & storage, returns user to RoleSelect.
+// ════════════════════════════════════════════════════════════════════════════
+
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../services/authService';
 import { AUTH_TOKEN_KEY, AUTH_USER_KEY, setAuthTokenInMemory } from '../services/api';
 
+// ── TypeScript Definition for Auth State & Actions ──────────────────────────
 interface AuthState {
+  // Current session data
   token: string | null;
   role: 'admin' | 'vendor' | null;
   username?: string;
@@ -13,6 +37,7 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
 
+  // Action functions
   loginAdmin: (user: string, pass: string) => Promise<boolean>;
   loginVendor: (vendorId: string) => Promise<boolean>;
   logout: () => Promise<void>;
@@ -20,15 +45,21 @@ interface AuthState {
   clearError: () => void;
 }
 
+// ── Create the Zustand Store Hook: useAuthStore ─────────────────────────────
 export const useAuthStore = create<AuthState>((set, get) => ({
+  // Initial state when the app launches
   token: null,
   role: null,
   isAuthenticated: false,
   isLoading: true,
   error: null,
 
+  // Reset any error messages displayed to the user
   clearError: () => set({ error: null }),
 
+  // ── 1. CHECK AUTHENTICATION ON APP STARTUP ────────────────────────────────
+  // Reads saved token from device storage (AsyncStorage)
+  // Verifies with backend `/api/auth/me` to ensure token hasn't expired.
   checkAuth: async () => {
     try {
       set({ isLoading: true });
@@ -44,7 +75,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           } catch {}
         }
 
-        // Probe backend
+        // Verify session live with the backend
         try {
           const me = await authService.getMe();
           if (me.loggedIn && me.role) {
@@ -76,6 +107,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       }
 
+      // No saved token found - user is not authenticated
       set({
         token: null,
         role: null,
@@ -92,6 +124,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  // ── 2. LOGIN ADMIN (CENTRAL KITCHEN) ──────────────────────────────────────
+  // Sends username & password to backend `/api/auth/login-admin`
   loginAdmin: async (username: string, password: string) => {
     try {
       set({ isLoading: true, error: null });
@@ -116,6 +150,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  // ── 3. LOGIN VENDOR (PARTNER OUTLET) ──────────────────────────────────────
+  // Sends vendor ID (e.g. 'V001') to backend `/api/auth/login-vendor`
   loginVendor: async (vendorId: string) => {
     try {
       set({ isLoading: true, error: null });
@@ -141,6 +177,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  // ── 4. LOGOUT ─────────────────────────────────────────────────────────────
+  // Clears storage, invalidates session, resets all state variables
   logout: async () => {
     set({ isLoading: true });
     await authService.logout();
@@ -156,3 +194,4 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
   },
 }));
+

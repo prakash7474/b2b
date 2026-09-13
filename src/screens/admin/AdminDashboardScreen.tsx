@@ -1,3 +1,13 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN OPERATIONS DASHBOARD SCREEN (AdminDashboardScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Fleet KPI Overview: Active vendors count, daily batter produced, dispatched batches.
+//   2. Pending Vendor Requisitions: Review and approve new partner shops registering on B2P.
+//   3. Restock Request Fulfillment:
+//      - Receives restock orders submitted by vendors.
+//      - Assigns an available Central Kitchen batch to fulfill the requisition.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -34,6 +44,7 @@ export const AdminDashboardScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
+  // ── Dashboard Data & Loading State ───────────────────────────────────────
   const [data, setData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

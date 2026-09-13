@@ -1,3 +1,17 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN INVENTORY & STOCK LEDGER SCREEN (InventoryListScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Outlet Selector: Select any registered vendor outlet from the scrollable dropdown.
+//   2. Live Stock View: Shows active assigned/received batches and calculates current stock kg.
+//   3. Stock Actions:
+//      - "+ Add Batches": Creates/assigns a batch with status "assigned" to this outlet.
+//      - "− Remove Batches": Interactive checklist to select and remove assigned batches.
+//   4. AI Panel A (Demand Forecasting):
+//      - Runs XGBoost inference on weather, festival, sales lag to recommend restock dispatch.
+//   5. AI Panel B (Spoilage Risk):
+//      - Runs Random Forest inference on pH, temperature, age to predict spoilage and flag discounts.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
@@ -185,6 +199,9 @@ export const InventoryListScreen: React.FC = () => {
     return activeVendors.find((v) => v.vendor_id === selectedVendorId);
   }, [activeVendors, selectedVendorId]);
 
+  // ── Compute Current Stock (KG) ──────────────────────────────────────────
+  // 📌 What this does: Sums volume_kg from all active batches assigned to this vendor.
+  // 👉 This ensures the stock number strictly matches the active batches without mismatch.
   const currentShopStockKg = useMemo(() => {
     if (shopBatches.length > 0) {
       return Math.round(shopBatches.reduce((acc, b) => acc + (b.volume_kg || b.quantity_kg || 0), 0) * 10) / 10;
@@ -193,6 +210,12 @@ export const InventoryListScreen: React.FC = () => {
     return Math.round(inventoryItems.reduce((acc, item) => acc + (item.quantity || 0), 0) * 10) / 10;
   }, [shopBatches, inventoryItems]);
 
+  // ── AI Action: Demand Forecasting Inference ─────────────────────────────
+  // 📌 What this does:
+  //    1. Calls backend XGBoost demand forecasting model for this vendor.
+  //    2. Compares predicted demand vs current stock.
+  //    3. If predicted > current stock: recommended dispatch = (predicted - current).
+  //    4. If current > predicted: flags surplus stock.
   const handleAnalyzeDemand = async () => {
     if (!selectedVendorId) return;
     setDemandLoading(true);
@@ -224,6 +247,13 @@ export const InventoryListScreen: React.FC = () => {
     }
   };
 
+  // ── AI Action: Spoilage Risk Evaluation ──────────────────────────────────
+  // 📌 What this does:
+  //    1. Calls backend Random Forest spoilage model for this vendor's batches.
+  //    2. Converts score to percentage.
+  // 👉 CHANGE HERE IF ASKED TO TWEAK SPOILAGE ALERT THRESHOLD:
+  //    - Default alert threshold: pct >= 30 (Medium or High risk)
+  //    - High risk label cutoff: pct > 70
   const handlePredictRisk = async () => {
     if (!selectedVendorId || !selectedVendor) return;
     setRiskLoading(true);
@@ -279,6 +309,10 @@ export const InventoryListScreen: React.FC = () => {
     }
   };
 
+  // ── Open Add / Remove Modal ─────────────────────────────────────────────
+  // 📌 What this does:
+  //    - 'add': pre-populates with default 10kg, auto-generates random Batch ID (e.g. B12345).
+  //    - 'remove': resets checklist to allow selecting assigned batches.
   const openActionModal = (type: 'add' | 'remove') => {
     if (!selectedVendorId) return;
     setActiveModal(type);
@@ -293,6 +327,12 @@ export const InventoryListScreen: React.FC = () => {
     }
   };
 
+  // ── Modal Submit Action (Add or Remove Batches) ───────────────────────────
+  // 📌 What this does:
+  //    - 'remove': Calls /api/inventory/remove-batches with selected batch IDs,
+  //      archives them, and recalculates stock.
+  //    - 'add': Calls /api/inventory with action 'add_batch', creating a new
+  //      batch with status "assigned" and synchronizing inventory.
   const handleModalSubmit = async () => {
     if (activeModal === 'remove') {
       if (selectedBatchIdsToRemove.length === 0) {

@@ -1,3 +1,24 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ROLE SELECTION SCREEN (src/screens/auth/RoleSelectScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This is the first screen displayed when a user launches the app without a saved session.
+//    It asks the user to choose their persona / portal:
+//
+//    1. "Admin Portal":
+//       - For Central Kitchen Managers and Operations supervisors.
+//       - Tapping navigates to `AdminLoginScreen` to enter username and password.
+//
+//    2. "Vendor Portal":
+//       - For partner idli/dosa restaurant and shop owners.
+//       - Tapping navigates to `VendorLoginScreen` to pick their store outlet.
+//
+// 👉 HOW TO CHANGE SCREEN TEXT OR COLORS:
+//    - App title: see `logoTitle` ("Batter to Platter").
+//    - Admin card accent: `adminCard` uses `colors.brownPrimary` / terracotta.
+//    - Vendor card accent: `vendorCard` uses `colors.greenPrimary` / banana green.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -6,11 +27,13 @@ import { AuthStackParamList } from '../../navigation/AuthStack';
 import { colors, radius, shadows, spacing } from '../../theme';
 
 export const RoleSelectScreen: React.FC = () => {
+  // Navigation hook to transition to AdminLogin or VendorLogin
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        {/* ── Brand Header & Tagline ────────────────────────────────────────── */}
         <View style={styles.headerCard}>
           <View style={styles.logoBadge}>
             <Text style={styles.logoBadgeText}>TRADITIONAL CRAFT & MODERN ML</Text>
@@ -23,9 +46,11 @@ export const RoleSelectScreen: React.FC = () => {
           </Text>
         </View>
 
+        {/* ── Selection Cards (Admin vs Vendor) ─────────────────────────────── */}
         <View style={styles.content}>
           <Text style={styles.promptText}>Select your workspace portal:</Text>
 
+          {/* Option A: Admin Portal Card */}
           <TouchableOpacity
             style={[styles.roleCard, styles.adminCard]}
             activeOpacity={0.8}
@@ -48,6 +73,7 @@ export const RoleSelectScreen: React.FC = () => {
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
 
+          {/* Option B: Vendor Portal Card */}
           <TouchableOpacity
             style={[styles.roleCard, styles.vendorCard]}
             activeOpacity={0.8}
@@ -71,6 +97,7 @@ export const RoleSelectScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
+        {/* ── Footer ────────────────────────────────────────────────────────── */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>B2P Platform • Fresh Batter Supply Chain</Text>
         </View>
@@ -79,6 +106,7 @@ export const RoleSelectScreen: React.FC = () => {
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -225,3 +253,4 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
 });
+

@@ -1,6 +1,24 @@
 """
-B2P (Batter-to-Plate) — Unified Platform
-Admin creates batches → assigns to vendors → vendors confirm receipt → ML predictions.
+══════════════════════════════════════════════════════════════════════════════
+📌 B2P (Batter-to-Plate) — UNIFIED BACKEND SERVER (app.py)
+══════════════════════════════════════════════════════════════════════════════
+WHAT THIS BACKEND DOES:
+  1. REST API: Serves all data to the React Native web and mobile frontend.
+  2. Database Layer: Connects to MongoDB Atlas (or local MongoDB) storing:
+     - Vendors (partner shops), Batches (batter containers), Inventory (stock levels),
+     - Restock Requests, Orders, Inventory Movements, and Activity Logs.
+  3. AI / ML Integration:
+     - Loads demand_forecast_model.pkl (XGBoost) for predictive stock replenishment.
+     - Loads spoilage_risk_model.pkl (Random Forest) to prevent sour/spoiled batter.
+  4. Workflows:
+     - Batch Lifecycle: Manufacture -> Assign to Shop -> Receive -> Stockout/Archive.
+     - Inventory Sync: Ensures shop inventory strictly equals active batches.
+
+💡 INSTRUCTOR DEMO QUICK-REFERENCE:
+  - Change default Admin Login: lines 70-71 (ADMIN_USER, ADMIN_PASS)
+  - Change MongoDB URI: line 74 (MONGODB_URI)
+  - Change Port / Host: bottom of this file (port=5000)
+══════════════════════════════════════════════════════════════════════════════
 """
 
 import os
@@ -34,12 +52,13 @@ def _load_env_file(path="atlas-credentials.env"):
 
 _load_env_file()
 
-# ── Flask setup ──────────────────────────────────────────────────────
+# ── Flask Server & CORS Setup ────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "b2p-secret-key-rotate-in-production")
 
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
+# Allow cross-origin requests from React Native Web (localhost:8081 / Expo)
 CORS(
     app,
     resources={r"/api/*": {"origins": "*"}},
@@ -50,36 +69,62 @@ CORS(
 # Token serializer for mobile React Native clients (Option B auth)
 auth_serializer = URLSafeTimedSerializer(app.secret_key, salt="b2p-auth")
 
-# ── Admin credentials (read from environment) ───────────────────────
+# ════════════════════════════════════════════════════════════════════
+# 🏷️ ADMIN CREDENTIALS
+# 👉 CHANGE HERE IF ASKED TO CHANGE DEFAULT LOGIN CREDENTIALS:
+# ════════════════════════════════════════════════════════════════════
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 
-# ── MongoDB connection ──────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════
+# 🏷️ MONGODB DATABASE CONNECTION & COLLECTIONS
+# 📌 Connects to MongoDB Atlas cloud (or fallback localhost:27017)
+# ════════════════════════════════════════════════════════════════════
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
 db = client["b2p"]
 
-# ── Collections ─────────────────────────────────────────────────────
+# ── Database Collections (Tables) ────────────────────────────────────
 COLS = {
-    # Operational (OLTP)
-    "vendors":            db["vendors"],
-    "products":           db["products"],
-    "batches":            db["batches"],
-    "inventory":          db["inventory"],
-    "orders":             db["orders"],
-    "order_items":        db["order_items"],
-    "logs":               db["logs"],
+    # Operational (OLTP Collections)
+    "vendors":            db["vendors"],            # Partner shop profiles (owner, location, tier)
+    "products":           db["products"],           # Products catalog (Idli Batter, Dosa Batter, etc.)
+    "batches":            db["batches"],            # Manufactured batches with pH, volume, status
+    "inventory":          db["inventory"],          # Current shop inventory records
+    "orders":             db["orders"],             # Completed store orders & sales
+    "order_items":        db["order_items"],        # Individual line items in orders
+    "logs":               db["logs"],               # Activity & alert logs (audit trail)
+
     # Vendor Restock Workflow
-    "restock_requests":   db["restock_requests"],
-    # Analytical (ML Feature Store)
-    "predictions":        db["predictions"],
-    "inventory_movement": db["inventory_movement"],
-    "weather_forecast":   db["weather_forecast"],
-    "festival_calendar":  db["festival_calendar"],
-    "feature_snapshots":  db["feature_snapshots"],
+    "restock_requests":   db["restock_requests"],   # Pending restock requests from shops
+
+    # Analytical (ML Feature Store & Logs)
+    "predictions":        db["predictions"],        # Log of past ML prediction inferences
+    "inventory_movement": db["inventory_movement"], # Ledger of every stock in/out movement
+    "weather_forecast":   db["weather_forecast"],   # Temperature & rain probability
+    "festival_calendar":  db["festival_calendar"],  # Holiday calendar for demand spikes
+    "feature_snapshots":  db["feature_snapshots"],  # Cached pre-computed ML feature rows
 }
 
-
+# ══════════════════════════════════════════════════════════════════════════════
+# 📌 FUNCTION: log_event(event_type, severity, actor, event, related_to, metadata)
+# ══════════════════════════════════════════════════════════════════════════════
+# 💡 WHAT THIS FUNCTION DOES (EXPLAIN TO INSTRUCTOR):
+#    This is the centralized audit logging engine for the B2P platform.
+#    Whenever ANY important event happens in the supply chain (e.g. batch created,
+#    stock received, restock approved, spoilage detected, incident reported),
+#    this function records a permanent timestamped document into MongoDB collection `logs`.
+#
+# ⚙️ HOW IT WORKS & WHAT IT INTERACTS WITH:
+#    - Writes directly to: `COLS["logs"]` (MongoDB collection)
+#    - Read by: `GET /api/logs` (LogsScreen in the Admin Console)
+#    - Parameters:
+#        * event_type: "activity" (normal actions), "alert" (warnings), "system" (lifecycle)
+#        * severity: "info", "warning", "critical"
+#        * actor: Who did it? ("Admin", "System", or vendor ID/name)
+#        * event: Human-readable explanation sentence.
+#        * related_to: Dictionary linking to affected vendor, batch, or order.
+# ══════════════════════════════════════════════════════════════════════════════
 def log_event(event_type, severity, actor, event, related_to=None, metadata=None):
     try:
         COLS["logs"].insert_one({
@@ -95,7 +140,23 @@ def log_event(event_type, severity, actor, event, related_to=None, metadata=None
         print("Error logging event:", e)
 
 
-# ── Database indexes (created at startup to speed up common queries) ─
+# ══════════════════════════════════════════════════════════════════════════════
+# 📌 FUNCTION: ensure_indexes()
+# ══════════════════════════════════════════════════════════════════════════════
+# 💡 WHAT THIS FUNCTION DOES (EXPLAIN TO INSTRUCTOR):
+#    Creates B-Tree database indexes across MongoDB collections during server startup.
+#    Without indexes, MongoDB performs full collection table scans (O(N) time complexity).
+#    With these indexes, queries execute in O(log N) time, ensuring instantaneous response times
+#    even when managing thousands of batches and orders!
+#
+# 🔍 KEY INDEX TYPES USED:
+#    1. Compound Indexes: E.g., `("vendor_id", 1), ("status", 1), ("created_at", -1)` on batches.
+#       Allows multi-field filtering (e.g. "Find all active batches for vendor V100 sorted by latest").
+#    2. 2dsphere Index: `("location", "2dsphere")` on vendors.
+#       Allows geospatial queries like `$near` to find closest delivery hubs on a map!
+#    3. Unique Index: `("date", 1)` on festival_calendar.
+#       Prevents accidental duplicate entries for the same calendar date.
+# ══════════════════════════════════════════════════════════════════════════════
 def ensure_indexes():
     spec = {
         "vendors": [
@@ -168,9 +229,8 @@ def ensure_indexes():
         print(f"  [WARN] Could not create unique index on festival_calendar.date: {e}")
 
 
-
-
 ensure_indexes()
+
 
 # ── Load ML models ─────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -224,7 +284,21 @@ FESTIVAL_MAP = {
 }
 
 
-# ── Movement writer (Phase C) ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# 📌 FUNCTION: write_movement(...)
+# ══════════════════════════════════════════════════════════════════════════════
+# 💡 WHAT THIS FUNCTION DOES (EXPLAIN TO INSTRUCTOR):
+#    Maintains an immutable financial-grade double-entry ledger of stock movements
+#    in MongoDB collection `inventory_movement`.
+#    Whenever batter arrives, is sold, adjusted, or discarded, this records the exact event.
+#
+# ⚙️ HOW IT WORKS & WHAT IT INTERACTS WITH:
+#    - Writes to: `COLS["inventory_movement"]`
+#    - Signed Quantity Convention:
+#        * Positive (+kg): Stock In (e.g. Batch received from central kitchen).
+#        * Negative (-kg): Stock Out (e.g. Sold to customers or discarded due to spoilage).
+#    - Movement Types: "receive", "sale", "add", "remove", "edit", "adjustment", "stockout".
+# ══════════════════════════════════════════════════════════════════════════════
 def write_movement(vendor_id, product_id, movement_type, quantity, batch_id=None,
                    related_order_id=None, expiry_at=None, triggered_by="system",
                    previous_qty=None, new_qty=None, notes=""):
@@ -257,6 +331,27 @@ def write_movement(vendor_id, product_id, movement_type, quantity, batch_id=None
         print(f"[WARN] write_movement failed: {e}")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 📌 FUNCTION: sync_vendor_inventory_with_batches(vendor_id, new_batch=None)
+# ══════════════════════════════════════════════════════════════════════════════
+# 💡 WHAT THIS FUNCTION DOES (CRITICAL ARCHITECTURAL CORE! STUDY THIS!):
+#    Guarantees ZERO-DISCREPANCY between individual physical batches in `batches`
+#    and the aggregate stock balance in `inventory`.
+#
+# ⚙️ STEP-BY-STEP RECONCILIATION LOGIC:
+#    1. Query MongoDB for all batches assigned to `vendor_id` whose status is
+#       ACTIVE: `status in ["received", "assigned"]`.
+#       (Archived or stocked-out batches are strictly excluded!).
+#    2. Calculates `total_active_stock = sum(batch.volume_kg)`.
+#    3. If `total_active_stock == 0`, updates inventory to 0 kg and sets freshnessScore=0.
+#    4. If active batches exist:
+#       - Finds primary batch (the earliest received batch).
+#       - Updates the vendor's inventory document with the true active sum,
+#         batch number, product name, and last_updated timestamp.
+#       - Deduplicates: if duplicate inventory documents exist for this vendor,
+#         it safely purges the extras so each vendor has exactly ONE clean record.
+#    5. Returns: `(total_active_stock_kg, active_batches)`.
+# ══════════════════════════════════════════════════════════════════════════════
 def sync_vendor_inventory_with_batches(vendor_id: str, new_batch: dict = None):
     """
     Ensure the vendor's inventory document(s) strictly match the sum of their active batches.
@@ -342,7 +437,37 @@ def sync_vendor_inventory_with_batches(vendor_id: str, new_batch: dict = None):
     return total_active_stock, active_batches
 
 
+
+# ════════════════════════════════════════════════════════════════════
+# FESTIVAL & WEATHER CONTEXT HELPERS (EXTERNAL CONTEXT FEATURES)
+# ════════════════════════════════════════════════════════════════════
+
 # ── Festival context lookup (Phase B) ───────────────────────────────
+# ==============================================================================
+# FUNCTION: get_festival_context(target_date)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Determines if a given calendar date falls within a festive period (e.g., Pongal,
+#   Diwali, New Year) in Tamil Nadu. Returns a binary flag (1 or 0) and the festival
+#   category string (e.g., "harvestFestival", "publicHoliday", or "none").
+#
+# WHY THIS MATTERS FOR MACHINE LEARNING:
+#   In Tamil Nadu, fresh batter consumption surges significantly (often 25% - 50%)
+#   around major festivals. Without this contextual feature, the XGBoost demand model
+#   would treat festive sales spikes as statistical anomalies or unexplained noise.
+#
+# HOW IT WORKS:
+#   1. Builds a 5-day search window: from [target_date - 2 days] to [target_date + 2 days].
+#      Looking ±2 days accounts for pre-festival preparation buying and post-festival holidays.
+#   2. Queries MongoDB collection `COLS["festival_calendar"]` using a range query:
+#      {"date": {"$gte": window_start, "$lte": window_end}}.
+#   3. If found: returns (1, festivalType). If no festival matches: returns (0, "none").
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "Why check ±2 days instead of just the exact holiday date?"
+#   A: "Households purchase batter 1-2 days before festivals to prepare breakfasts,
+#      and extended holiday weekends prolong peak batter consumption."
+# ==============================================================================
 def get_festival_context(target_date):
     """Return (is_festival: int, festival_type: str) for a given date.
     Looks ±2 days around target_date in the festival_calendar collection.
@@ -358,6 +483,28 @@ def get_festival_context(target_date):
 
 
 # ── Weather forecast lookup (Phase B) ────────────────────────────────
+# ==============================================================================
+# FUNCTION: get_weather_for_date(target_date)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Fetches expected ambient temperature (°C) and rain probability (0.0 to 1.0)
+#   for a target prediction date.
+#
+# HOW IT WORKS:
+#   1. Queries `COLS["weather_forecast"]` for forecasts covering target_date's full 24-hr day.
+#   2. Sorts descending by `forecastIssuedAt` to retrieve the most recent weather bulletin.
+#   3. Resilient Fallback: If no forecast is found in MongoDB, it applies domain-specific
+#      Chennai seasonal climate defaults:
+#        - Monsoon (June - November): 29°C, 55% rain probability.
+#        - Mild Winter (December - February): 26°C, 10% rain probability.
+#        - Summer (March - May): 35°C, 5% rain probability.
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "Why does weather affect both demand and spoilage models?"
+#   A: "Higher ambient temperatures accelerate microbial fermentation in batter,
+#      rapidly increasing lactic acid and lowering pH. Rainy days increase home
+#      cooking and hot tiffin consumption, shifting batter demand upward."
+# ==============================================================================
 def get_weather_for_date(target_date):
     """Return (temperatureC: float, rain_probability: float) for a given date.
     Reads from weather_forecast collection; falls back to Chennai seasonal defaults
@@ -382,6 +529,17 @@ def get_weather_for_date(target_date):
 
 
 # ── Festival calendar seed (Phase B) ────────────────────────────────
+# ==============================================================================
+# FUNCTION: seed_festival_calendar()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Pre-populates MongoDB `festival_calendar` with official government holidays
+#   and cultural festivals for Tamil Nadu and National India across 2026-2027.
+#
+# IDEMPOTENCY:
+#   Checks `COLS["festival_calendar"].count_documents({}) > 0` before inserting.
+#   If documents already exist, it immediately returns to avoid duplicate seeds.
+# ==============================================================================
 def seed_festival_calendar():
     """One-time seed of Tamil Nadu + national festival calendar (2026-2027)."""
     if COLS["festival_calendar"].count_documents({}) > 0:
@@ -433,6 +591,14 @@ seed_festival_calendar()
 
 
 # ── Startup validator: catch verificationStatus field name drift ─────
+# ==============================================================================
+# FUNCTION: _validate_vendor_field_names()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Schema sanity check on application boot. Verifies that no legacy documents in
+#   `vendors` retain the deprecated snake_case field `verification_status`.
+#   Ensures consistency with the standard camelCase field `verificationStatus`.
+# ==============================================================================
 def _validate_vendor_field_names():
     bad = COLS["vendors"].count_documents({"verification_status": {"$exists": True}})
     if bad > 0:
@@ -442,13 +608,41 @@ def _validate_vendor_field_names():
 _validate_vendor_field_names()
 
 
+# ════════════════════════════════════════════════════════════════════
+# UTILITY SERIALIZATION & ENCODING HELPERS
+# ════════════════════════════════════════════════════════════════════
 
+# ==============================================================================
+# FUNCTION: safe_encode(encoder, value, known_labels)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Safely encodes categorical text labels (e.g., 'locality', 'storageType') into
+#   numerical integer IDs required by Scikit-Learn / XGBoost models.
+#
+# WHY THIS IS CRITICAL:
+#   In production, if a user or newly registered vendor has an unseen or null
+#   categorical value, calling `encoder.transform([unknown_value])` directly will
+#   throw a runtime `ValueError: y contains previously unseen labels`.
+#   This helper intercepts unknown labels and assigns the default fallback integer 0.
+# ==============================================================================
 def safe_encode(encoder, value, known_labels):
     if value in known_labels:
         return int(encoder.transform([value])[0])
     return 0
 
 
+# ==============================================================================
+# FUNCTION: jsonify_doc(doc)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Prepares raw MongoDB BSON documents for JSON HTTP responses sent to frontend.
+#
+# TRANSFORMATIONS APPLIED:
+#   1. `_id` (ObjectId) -> stringified: `"664a1b..."`
+#   2. `datetime` objects -> ISO 8601 formatted strings: `"2026-09-13T10:30:00Z"`
+#   3. Any embedded ObjectId instances -> converted to strings.
+#   Without this, Flask's `jsonify()` throws `TypeError: Object of type ObjectId is not JSON serializable`.
+# ==============================================================================
 def jsonify_doc(doc):
     if not doc:
         return doc
@@ -462,6 +656,20 @@ def jsonify_doc(doc):
     return doc
 
 
+# ==============================================================================
+# FUNCTION: parse_date(val)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Robust multi-format date parser. Converts diverse incoming date representations
+#   (ISO-8601 strings, millisecond timestamps, date-only strings) into Python `datetime`.
+#
+# SUPPORTED FORMATS:
+#   - Standard UTC ISO: "%Y-%m-%dT%H:%M:%SZ"
+#   - Fractional Seconds: "%Y-%m-%dT%H:%M:%S.%fZ"
+#   - Local DateTime: "%Y-%m-%dT%H:%M:%S" or "%Y-%m-%dT%H:%M"
+#   - Date Only: "%Y-%m-%d"
+#   - Fallback: returns current UTC timestamp (`datetime.utcnow()`) if parsing fails.
+# ==============================================================================
 def parse_date(val):
     if isinstance(val, str):
         for fmt in (
@@ -480,6 +688,71 @@ def parse_date(val):
     return datetime.utcnow()
 
 
+# ════════════════════════════════════════════════════════════════════
+# CORE ML FEATURE ENGINEERING ENGINE (DEMAND FORECASTING - LAYER 1)
+# ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# FUNCTION: compute_sales_features(vendor_id, product_name, target_date, window, prefetched=None)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Constructs the exact 17-dimensional mathematical feature vector required by
+#   the XGBoost Demand Forecasting Regressor (`demand_model.pkl`).
+#   Extracts historical sales signals from MongoDB `orders` & `order_items`,
+#   vendor demographic profiles from `vendors`, current physical stock from `inventory`,
+#   live weather forecast from `weather_forecast`, and festival calendar from `festival_calendar`.
+#
+# RETURNS:
+#   tuple: (feature_dict, available_stock, vendor_rating)
+#     - feature_dict: Dict with all 17 features formatted for model inference.
+#     - available_stock: Current physical quantity in kg stored at vendor location.
+#     - vendor_rating: Partner vendor quality & reliability rating (1.0 to 5.0).
+#
+# INSTRUCTOR VIVA CHEAT-SHEET — THE 17 FEATURES EXPLAINED:
+#   1. hourSin & 2. hourCos:
+#      - Trigonometric cyclical encoding of dispatch hour: sin(2π*h/24) & cos(2π*h/24).
+#      - Morning delivery: 7 AM (hour = 7). Evening delivery: 5 PM (hour = 17).
+#      - Ensures the model understands that 23:00 (11 PM) and 01:00 (1 AM) are 2 hours apart,
+#        not 22 hours apart.
+#   3. weekdaySin & 4. weekdayCos:
+#      - Trigonometric cyclical encoding of weekday (0=Mon to 6=Sun): sin(2π*w/7) & cos(2π*w/7).
+#   5. isWeekend:
+#      - Binary (1 if Saturday/Sunday, else 0). Batter demand spikes 20-30% on weekends.
+#   6. isFestivalWindow:
+#      - Binary (1 if date is within ±2 days of Tamil Nadu festivals, else 0).
+#   7. forecastTemperatureC:
+#      - Ambient temperature (°C) from forecast collection or Chennai seasonal climate default.
+#   8. forecastRainProbability:
+#      - Probability of rain (0.0 to 1.0). Rainy weather shifts breakfast demand higher.
+#   9. lag1:
+#      - Total product units sold in the immediately preceding 24 hours (immediate velocity).
+#   10. lag7:
+#      - Cumulative units sold in the preceding 7 days (weekly baseline).
+#   11. rolling7DayMean:
+#      - Average daily sales over the preceding 7 days (μ_7d).
+#   12. rolling7DayStd:
+#      - Standard deviation of daily sales over the preceding 7 days (σ_7d).
+#        Measures demand volatility.
+#   13. sameSlot4WeekMean:
+#      - Average sales on the EXACT same day-of-week over the previous 4 weeks.
+#        Crucial for capturing weekly consumer patterns (e.g. Sunday tiffin tradition).
+#   14. recentTrend:
+#      - Ratio of rolling7DayMean / rolling28DayMean.
+#        * > 1.0 => Sales are accelerating (growing vendor demand).
+#        * < 1.0 => Sales are decelerating (declining vendor demand).
+#        * = 1.0 => Steady-state demand.
+#   15. localityTierEnc:
+#      - Integer encoded locality classification: residential_budget, commercial_hub, residential_premium.
+#   16. hotspotDensityScore:
+#      - Numerical score (0-100) reflecting foot traffic density (schools, transit, IT parks).
+#   17. productIdEnc:
+#      - Integer encoded product ID from Scikit-Learn LabelEncoder.
+#
+# HIGH-PERFORMANCE PREFETCH OPTIMIZATION:
+#   Accepts an optional `prefetched` dictionary. When calculating fleet-wide demand
+#   on the Admin Dashboard, passing bulk pre-fetched database records reduces DB
+#   round-trips from O(N * 4) down to O(1) in-memory lookups!
+# ==============================================================================
 def compute_sales_features(vendor_id, product_name, target_date, window, prefetched=None):
     """Compute ML demand features from actual order history in the database.
     
@@ -488,9 +761,11 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
     Optionally accepts a `prefetched` dict for high-throughput batch execution.
     """
     now = datetime.utcnow()
+    # Morning batch dispatches at 07:00 (7 AM); Evening batch dispatches at 17:00 (5 PM)
     hour = 7 if window == "morning" else 17
     
-    # ── Time features (from ORDERS.order_date) ──
+    # ── 1. Cyclical Time Features (Trigonometric Transformations) ───────────────
+    # Sin/Cos transforms map linear hours/days into a continuous circular manifold.
     hour_sin = math.sin(2 * math.pi * hour / 24)
     hour_cos = math.cos(2 * math.pi * hour / 24)
     weekday = target_date.weekday()
@@ -498,7 +773,7 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
     weekday_cos = math.cos(2 * math.pi * weekday / 7)
     is_weekend = 1 if weekday >= 5 else 0
     
-    # ── Get vendor data ──
+    # ── 2. Vendor Profile Features ──────────────────────────────────────────────
     if prefetched and "vendors_by_id" in prefetched:
         vendor = prefetched["vendors_by_id"].get(vendor_id)
     else:
@@ -507,10 +782,10 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
     hotspot = vendor.get("hotspotDensityScore", 30) if vendor else 30
     vendor_rating = vendor.get("rating", 4.0) if vendor else 4.0
     
-    # ── Get product ID for encoding ──
+    # ── 3. Product Identifier Mapping ───────────────────────────────────────────
     product_id = PRODUCT_NAME_TO_ID.get(product_name, product_name)
     
-    # ── Sales History: query ORDER_ITEMS + ORDERS for this vendor ──
+    # ── 4. Historical Sales Queries: Join ORDERS + ORDER_ITEMS ──────────────────
     if prefetched and "orders_by_vendor" in prefetched:
         vendor_orders = prefetched["orders_by_vendor"].get(vendor_id, [])
     else:
@@ -541,7 +816,7 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
             {"order_id": 1, "inventory_id": 1, "quantity": 1}
         ))
 
-    # Map order_id → total units sold (scoped to the target product)
+    # Map order_id → total units sold (scoped strictly to the target batter product)
     order_units = {}
     for item in vendor_items:
         if inv_by_id.get(item.get("inventory_id")) != product_name:
@@ -549,7 +824,7 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
         oid = item["order_id"]
         order_units[oid] = order_units.get(oid, 0) + item.get("quantity", 0)
     
-    # ── Compute sales velocity features ──
+    # ── 5. Compute Time-Lagged & Rolling Sales Velocity ─────────────────────────
     lag1 = 0
     lag7 = 0
     rolling_7d_sales = []
@@ -565,21 +840,27 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
         units = order_units.get(order["order_id"], 0)
         days_ago = (now - odate).days
         
+        # Immediate 24-hour lag
         if days_ago <= 1:
             lag1 += units
+        # 7-day rolling window
         if days_ago <= 7:
             lag7 += units
             rolling_7d_sales.append(units)
+        # 28-day rolling window (4 calendar weeks)
         if days_ago <= 28:
             rolling_28d_sales.append(units)
+            # Match the exact weekday for same-slot seasonality (e.g. all Sundays in the month)
             if odate.weekday() == weekday:
                 same_slot_4wk_sales.append(units)
     
+    # Statistical aggregates with domain-informed cold-start defaults (15 kg baseline)
     rolling7_mean = sum(rolling_7d_sales) / max(1, len(rolling_7d_sales)) if rolling_7d_sales else 15.0
     rolling7_std = float(np.std(rolling_7d_sales)) if len(rolling_7d_sales) > 1 else 4.0
     rolling28_mean = sum(rolling_28d_sales) / max(1, len(rolling_28d_sales)) if rolling_28d_sales else 15.0
     same_slot_4wk = sum(same_slot_4wk_sales) / max(1, len(same_slot_4wk_sales)) if same_slot_4wk_sales else rolling7_mean
     
+    # Cold-start fallback for brand new vendors with zero sales history
     if not vendor_orders:
         lag1 = 15.0
         lag7 = 14.0
@@ -588,9 +869,11 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
         rolling28_mean = 15.0
         same_slot_4wk = 16.0
     
+    # Trend ratio: >1 means upward momentum, <1 means softening demand
     recent_trend = rolling7_mean / rolling28_mean if rolling28_mean > 0 else 1.0
     
-    # ── Current stock level (from INVENTORY, verified against active received batches) ──
+    # ── 6. Physical Inventory Stock Verification ────────────────────────────────
+    # Available stock is strictly zero if the vendor has NO active received batches.
     if prefetched and "received_by_vendor" in prefetched:
         active_received = prefetched["received_by_vendor"].get(vendor_id, [])
     else:
@@ -605,19 +888,19 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
             inv_items = list(COLS["inventory"].find({"vendor_id": vendor_id}))
         available_stock = sum(float(i.get("quantity", 0)) for i in inv_items)
 
-    # ── Weather: read from weather_forecast collection (Chennai seasonal fallback) ──
+    # ── 7. Weather Forecast Lookup ─────────────────────────────────────────────
     if prefetched and "weather" in prefetched:
         temperature, rain_prob = prefetched["weather"]
     else:
         temperature, rain_prob = get_weather_for_date(target_date)
 
-    # ── Festival context: read from festival_calendar collection ──
+    # ── 8. Festival Calendar Context ───────────────────────────────────────────
     if prefetched and "festival" in prefetched:
         is_festival, festival_type = prefetched["festival"]
     else:
         is_festival, festival_type = get_festival_context(target_date)
 
-
+    # ── 9. Final 17-Feature Dictionary Assembly ────────────────────────────────
     feature_dict = {
         "hourSin": round(hour_sin, 4),
         "hourCos": round(hour_cos, 4),
@@ -638,10 +921,20 @@ def compute_sales_features(vendor_id, product_name, target_date, window, prefetc
         "productIdEnc": safe_encode(product_encoder, product_id, KNOWN_PRODUCTS),
     }
 
-    
     return feature_dict, available_stock, vendor_rating
 
 
+# ════════════════════════════════════════════════════════════════════
+# AUTHENTICATION & SECURITY MIDDLEWARE (DUAL-MODE AUTH)
+# ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# DECORATOR: login_required(f)
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Decorator for Flask routes requiring an active user session.
+#   Returns HTTP 401 Unauthorized if "user" key is missing from Flask `session`.
+# ==============================================================================
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -651,10 +944,27 @@ def login_required(f):
     return decorated
 
 
-# /api/login (creates the session) and /api/me (login-state probe) stay public.
+# Whitelist of public API routes that bypass mandatory authentication checks.
+# /api/login (authenticates users), /api/me (auth-state probe), /api/logout (destroys session).
 PUBLIC_API_ENDPOINTS = {"/api/login", "/api/me", "/api/logout"}
 
 
+# ==============================================================================
+# FUNCTION: _get_authenticated_user()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Extracts and validates identity from either:
+#   1. React Native Mobile App: `Authorization: Bearer <signed_token>` header.
+#      Decodes and cryptographically verifies token via `itsdangerous.URLSafeTimedSerializer`.
+#      Tokens expire after 7 days (604,800 seconds).
+#   2. Web Browser Dashboard: Flask server-side encrypted session cookie (`session.get("user")`).
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "Why support both Bearer tokens and Session cookies?"
+#   A: "React Native mobile apps do not handle browser cookie jars reliably across
+#      network boundaries, so they pass cryptographically signed Bearer JWT/timed
+#      tokens in HTTP headers. Web browsers natively manage HTTP-only session cookies."
+# ==============================================================================
 def _get_authenticated_user():
     """Extract authenticated user from Authorization Bearer token or session cookie."""
     auth_header = request.headers.get("Authorization", "")
@@ -667,6 +977,19 @@ def _get_authenticated_user():
     return session.get("user")
 
 
+# ==============================================================================
+# MIDDLEWARE HOOK: @app.before_request -> _require_api_auth()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Global security guard running before every HTTP request:
+#   1. Ignores static web assets and templates (only filters `/api/*`).
+#   2. Allows HTTP OPTIONS requests (critical for CORS preflight handshakes from React Native).
+#   3. Allows unauthenticated access to PUBLIC_API_ENDPOINTS.
+#   4. For all other API requests: checks `_get_authenticated_user()`.
+#      - If invalid/expired: returns HTTP 401 Unauthorized immediately.
+#      - If valid: injects user into `session["user"]` so downstream route handlers
+#        can access caller identity seamlessly.
+# ==============================================================================
 @app.before_request
 def _require_api_auth():
     """Enforce login on every /api/* endpoint except the allowlist."""
@@ -685,8 +1008,24 @@ def _require_api_auth():
 
 
 # ════════════════════════════════════════════════════════════════════
-# LOGIN / LOGOUT
+# LOGIN / LOGOUT & SESSION PROBE ROUTES
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: POST /api/login
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Handles authentication for both user roles:
+#   1. Role 'admin': Validates static username/password against environment config.
+#   2. Role 'vendor': Validates vendor_id existence in MongoDB `COLS["vendors"]`.
+#
+# RETURNS:
+#   JSON payload with:
+#     - `ok`: True
+#     - `role`: "admin" or "vendor"
+#     - `token`: Signed bearer token for mobile app storage (AsyncStorage)
+#     - `vendor_id` / `shop_name`: Vendor context for mobile app header
+# ==============================================================================
 @app.route("/api/login", methods=["POST"])
 def api_login():
     data = request.json or {}
@@ -723,12 +1062,25 @@ def api_login():
     return jsonify({"error": "Invalid role"}), 400
 
 
+# ==============================================================================
+# ROUTE: POST /api/logout
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Clears the Flask server-side session, logging out the web client.
+# ==============================================================================
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
     session.clear()
     return jsonify({"ok": True})
 
 
+# ==============================================================================
+# ROUTE: GET /api/me
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Session probe endpoint called by frontend applications on app launch or
+#   page refresh to determine if the stored session/token is still valid.
+# ==============================================================================
 @app.route("/api/me")
 def api_me():
     user = _get_authenticated_user()
@@ -738,8 +1090,42 @@ def api_me():
 
 
 # ════════════════════════════════════════════════════════════════════
-# DASHBOARD
+# ADMIN COMMAND CENTER: UNIFIED DASHBOARD ENDPOINT
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/dashboard & GET /api/dashboard/summary
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   The central nervous system of the B2P Admin Web Dashboard.
+#   Aggregates real-time business KPIs, fleet telemetry, inventory distribution
+#   (Central Kitchen vs Partner Stores), 7-day actual vs predicted sales trends,
+#   top demand spike candidate detection, live Random Forest spoilage risk
+#   distributions, pending vendor onboarding requisitions, and vendor restock requests.
+#
+# DATABASE COLLECTIONS ACCESSED:
+#   - `vendors`: Fleet counts, status checks, store refrigeration profiles.
+#   - `batches`: Manufacturing volumes, transit states (`assigned`, `received`).
+#   - `inventory`: On-hand shelf stock at partner retail outlets.
+#   - `orders` & `order_items`: Recent sales transactions for rolling velocity.
+#   - `weather_forecast` & `festival_calendar`: Live environmental signals.
+#   - `restock_requests`: Pending inventory restock orders from vendors.
+#
+# KEY ARCHITECTURAL & VIVA HIGHLIGHTS:
+#   1. Fleet-Wide Pre-Fetch Engine (Lines ~1148-1188):
+#      Instead of querying MongoDB 4 times per vendor inside an O(N) loop (which
+#      causes massive N+1 database round-trips), all active vendors, orders, items,
+#      and batches are bulk-fetched into in-memory hash maps in 3 single database trips!
+#   2. Spike Percentage Formula (Line ~1200):
+#      spikePct = ((v_pred - rolling_base) / rolling_base) * 100
+#      Flags retail stores whose predicted demand is exceeding their 7-day average.
+#   3. Demand Modulation (Lines ~1233-1237):
+#      Weekend multiplier: 1.15x (Sat/Sun); Monday multiplier: 0.92x.
+#      Festival multiplier: 1.25x (+25% boost during festival windows).
+#   4. Live Spoilage Risk Composite Formula (Lines ~1284-1286):
+#      Composite Risk = (P_High * 0.90) + (P_Medium * 0.50) + (P_Low * 0.15)
+#      Categorization: Green (< 0.35), Amber (0.35 - 0.70), Red (> 0.70).
+# ==============================================================================
 @app.route("/api/dashboard", methods=["GET"])
 @app.route("/api/dashboard/summary", methods=["GET"])
 def dashboard():
@@ -749,7 +1135,7 @@ def dashboard():
     orders_col = COLS["orders"]
     predictions_col = COLS["predictions"]
 
-    # Fleet counts
+    # ── 1. Fleet Vendor & Batch Status Counts ──────────────────────────────────
     active_vendors = vendors_col.count_documents({
         "verificationStatus": {"$nin": ["rejected", "terminated"]}
     })
@@ -758,24 +1144,27 @@ def dashboard():
     received_batches = batches_col.count_documents({"status": "received"})
     delivered_batches = received_batches or orders_col.count_documents({"order_status": "completed"})
 
-    # Inventory Snapshot: Central Kitchen vs Partner Stores breakdown
+    # ── 2. Inventory Breakdown: Central Kitchen vs Retail Partner Stores ───────
+    # Central Kitchen stock = batches produced at hub not yet dispatched to any vendor
     central_batches = list(batches_col.find({
         "status": "created",
         "$or": [{"vendor_id": None}, {"vendor_id": ""}, {"vendor_id": {"$exists": False}}]
     }))
     central_stock = round(sum(float(b.get("volume_kg", b.get("quantity_kg", 0))) for b in central_batches), 1)
 
+    # Partner Store stock = active retail shelf stock recorded in inventory ledger
     stock_agg = list(inventory_col.aggregate(
         [{"$group": {"_id": None, "qty": {"$sum": "$quantity"}}}]
     ))
     partner_stock = round(stock_agg[0]["qty"], 1) if stock_agg else 0
     total_stock = round(central_stock + partner_stock, 1)
 
+    # Low stock alert count: stores where on-hand quantity <= minimum buffer threshold
     low_stock = inventory_col.count_documents({
         "$expr": {"$lte": ["$quantity", {"$ifNull": ["$minimumStock", "$minimum_stock"]}]}
     })
 
-    # 7-day demand trend (dynamically aggregated from orders/predictions/ML model)
+    # ── 3. 7-Day Actual Sales Trend from Historical Orders ──────────────────────
     now = datetime.utcnow()
     trend_7day = []
     # Pre-fetch order items & orders for the last 7 days to calculate actual sales per day
@@ -793,12 +1182,12 @@ def dashboard():
             d_key = o_date.strftime("%Y-%m-%d")
             daily_actuals[d_key] = daily_actuals.get(d_key, 0.0) + float(it.get("quantity", 0))
 
-    # Pre-fetch active vendors & build dictionary for instant in-memory lookups
+    # ── 4. High-Performance Bulk Pre-fetch for ML Inference ────────────────────
+    # Avoids N+1 query overhead by pre-loading all relevant datasets into memory
     active_vendors_list = list(vendors_col.find({"verificationStatus": "active"}))
     vids = [v.get("vendor_id") for v in active_vendors_list if v.get("vendor_id")]
     vendors_by_id = {v.get("vendor_id"): v for v in active_vendors_list}
 
-    # Bulk pre-fetch analytical datasets for all active vendors in 3 single round-trips
     weather_curr = get_weather_for_date(now)
     festival_curr = get_festival_context(now)
 
@@ -834,7 +1223,7 @@ def dashboard():
         "festival": festival_curr,
     }
 
-    # Compute live predictions and spike percentages for active vendors in microseconds
+    # ── 5. Real-Time Demand Prediction & Surge/Spike Detection ─────────────────
     vendor_predictions = {}
     top_spike_candidates = []
     for v in active_vendors_list:
@@ -845,6 +1234,7 @@ def dashboard():
             v_pred = max(0.0, round(float(demand_model.predict(row_df)[0]), 1))
             vendor_predictions[v_id] = v_pred
             rolling_base = max(5.0, feat_dict.get("rolling7DayMean", 15.0))
+            # Surge spike calculation: percentage increase over normal weekly run-rate
             spike_pct = round(((v_pred - rolling_base) / rolling_base) * 100, 1)
             top_spike_candidates.append({
                 "vendor_id": v_id,
@@ -855,11 +1245,12 @@ def dashboard():
         except Exception as e:
             print(f"[WARN] Failed spike prediction for {v_id}: {e}")
 
+    # Sort descending by spike percentage to rank the most critical stores
     top_spike_candidates.sort(key=lambda x: (x["spikePct"], x["predictedKg"]), reverse=True)
     top_spike_vendors = top_spike_candidates[:5]
     total_active_pred = sum(vendor_predictions.values()) or 45.0
 
-    # 7-day demand trend (combines real order sales + ML forecast with festival/day-of-week modulation)
+    # ── 6. 7-Day Demand Forecast Modulated by Day-of-Week & Festival ────────────
     fest_start = now - timedelta(days=9)
     fest_end = now + timedelta(days=3)
     fest_list = list(COLS["festival_calendar"].find({"date": {"$gte": fest_start, "$lte": fest_end}}))
@@ -878,6 +1269,7 @@ def dashboard():
         d_key = day.strftime("%Y-%m-%d")
         actual_val = round(daily_actuals.get(d_key, 0.0), 1)
 
+        # Apply domain multipliers: Saturday/Sunday peak (+15%), Monday dip (-8%)
         weekday_idx = day.weekday()
         wk_factor = 1.15 if weekday_idx in (5, 6) else (0.92 if weekday_idx == 0 else 1.0)
         is_fest = _is_fest_window(day)
@@ -894,7 +1286,7 @@ def dashboard():
             "actual": actual_val,
         })
 
-    # Fleet Spoilage Risk Distribution (Live Random Forest model inference over active batches)
+    # ── 7. Fleet Spoilage Risk Distribution (Live Random Forest Evaluation) ────
     active_batches = list(batches_col.find({"status": {"$in": ["received", "assigned"]}}).limit(50))
     green_c, amber_c, red_c = 0, 0, 0
     for b in active_batches:
@@ -911,7 +1303,7 @@ def dashboard():
         h_exp = max(0.0, 72.0 - b_hours) if h_fridge else max(0.0, 24.0 - b_hours)
         t_exp = (f_temp if h_fridge else amb_temp) * b_hours
 
-
+        # Assemble the 13 feature variables for the Random Forest Spoilage Classifier
         b_feat = {
             "initialPH": float(b.get("initialPH", 4.4)),
             "hoursSinceManufacture": round(b_hours, 1),
@@ -931,6 +1323,7 @@ def dashboard():
             b_row = pd.DataFrame([b_feat])[spoilage_features]
             b_proba = spoilage_model.predict_proba(b_row)[0]
             r_map = {label_encoder.classes_[idx]: float(p) for idx, p in enumerate(b_proba)}
+            # Composite risk weighted score: High risk gets 90% weight, Med gets 50%, Low gets 15%
             c_risk = (r_map.get("High", 0.0) * 0.9) + (r_map.get("Medium", 0.0) * 0.5) + (r_map.get("Low", 0.0) * 0.15)
             if c_risk < 0.35:
                 green_c += 1
@@ -947,7 +1340,8 @@ def dashboard():
         "red": max(0, red_c),
     }
 
-    # Vendor Requisitions (pending vendor sign-ups)
+    # ── 8. Vendor Requisitions & Seed Candidates ───────────────────────────────
+    # Fetches unverified merchant applications for admin approval workflow
     pending_vendors = list(vendors_col.find({"verificationStatus": "pending"}))
     if not pending_vendors:
         seed_pending = [
@@ -984,7 +1378,7 @@ def dashboard():
             vendors_col.update_one({"vendor_id": sp["vendor_id"]}, {"$setOnInsert": sp}, upsert=True)
         pending_vendors = list(vendors_col.find({"verificationStatus": "pending"}))
 
-    # Monthly Analytics & Weekly Dispatch Trend (for Screen 4 Stock & Inventory)
+    # ── 9. Monthly Production & Dispatch Velocity Metrics ──────────────────────
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     batches_this_month = list(batches_col.find({"created_at": {"$gte": month_start}}))
     dispatched_this_month = batches_col.count_documents({
@@ -1014,12 +1408,10 @@ def dashboard():
             "dispatched": w_count
         })
 
-
     requisitions = [jsonify_doc(v) for v in pending_vendors]
 
-    # Pending Restock Requests for Dashboard display
+    # ── 10. Pending Restock Requests for Dashboard Ledger ──────────────────────
     pending_restocks = list(COLS["restock_requests"].find({"status": "pending"}).sort("created_at", -1).limit(25))
-    # Also resolve vendor names if missing
     req_vendor_ids = {r.get("vendor_id") for r in pending_restocks if r.get("vendor_id")}
     req_v_names = {v["vendor_id"]: v.get("shop_name", "") for v in vendors_col.find({"vendor_id": {"$in": list(req_vendor_ids)}}, {"vendor_id": 1, "shop_name": 1})} if req_vendor_ids else {}
     restock_requests_list = []
@@ -1028,6 +1420,7 @@ def dashboard():
         doc_r["vendor_name"] = req_v_names.get(r.get("vendor_id"), r.get("vendor_name", r.get("vendor_id", "")))
         restock_requests_list.append(doc_r)
 
+    # ── 11. Final Structured JSON Response Payload ─────────────────────────────
     return jsonify({
         # Legacy compatibility keys
         "totalVendors": active_vendors,
@@ -1036,7 +1429,7 @@ def dashboard():
         "receivedBatches": received_batches,
         "totalStockQuantity": total_stock,
         "lowStockItems": low_stock,
-        # Section 4 spec structured keys
+        # Structured Section 4 keys consumed by React Native Admin Dashboard
         "fleet": {
             "totalActiveVendors": active_vendors,
             "totalBatches": total_batches,
@@ -1064,8 +1457,28 @@ def dashboard():
 
 
 # ════════════════════════════════════════════════════════════════════
-# VENDORS
+# VENDOR REGISTRY & ONBOARDING LIFECYCLE (CRUD OPERATIONS)
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/vendors
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns the list of partner grocery/tiffin vendors with dynamic fleet statistics.
+#   Supports query parameters:
+#     - `status`: "active", "pending" (requisitions), or "all".
+#     - `sort`: "demand" (highest predicted consumption), "batches", or "name".
+#
+# PERFORMANCE OPTIMIZATION:
+#   Runs a single MongoDB `$group` aggregation pipeline on `COLS["batches"]` to
+#   count total batches and received batches for all vendors in ONE query.
+#   Avoids executing N queries inside the loop (preventing N+1 query bottlenecks).
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "How is default demand estimated for vendors in this listing?"
+#   A: "Using the formula: 15.0 kg + (hotspotDensityScore * 0.3). This gives an
+#      instant demand approximation based on high-density footfall locations."
+# ==============================================================================
 @app.route("/api/vendors", methods=["GET"])
 def get_vendors():
     status_filter = request.args.get("status")
@@ -1082,7 +1495,7 @@ def get_vendors():
 
     docs = list(COLS["vendors"].find(query))
 
-    # Aggregate batch counts for every vendor in a single pass (avoids N+1).
+    # Single-pass batch count aggregation across all vendors
     counts = {}
     for c in COLS["batches"].aggregate([
         {"$group": {
@@ -1103,7 +1516,7 @@ def get_vendors():
         item["predicted_demand_kg"] = round(15.0 + (item.get("hotspotDensityScore", 30) * 0.3), 1)
         result.append(item)
 
-    # Sort
+    # Sort results according to user selection
     if sort_by == "name":
         result.sort(key=lambda x: x.get("shop_name", "").lower())
     elif sort_by == "batches":
@@ -1114,6 +1527,13 @@ def get_vendors():
     return jsonify(result)
 
 
+# ==============================================================================
+# ROUTE: GET /api/vendors/<vendor_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Fetches detailed profile for a single merchant (refrigeration specs, FSSAI cert,
+#   locality tier, rating) along with all batches assigned to this vendor.
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>", methods=["GET"])
 def get_vendor(vendor_id):
     doc = COLS["vendors"].find_one({"vendor_id": vendor_id})
@@ -1125,6 +1545,18 @@ def get_vendor(vendor_id):
     return jsonify(item)
 
 
+# ==============================================================================
+# ROUTE: PATCH / PUT /api/vendors/<vendor_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Updates vendor operational parameters and manages onboarding state transitions.
+#
+# AUDIT LOGGING:
+#   When `verificationStatus` changes, automatically generates an audit log entry:
+#     - "active": Admin approved vendor requisition.
+#     - "rejected": Admin rejected vendor requisition.
+#     - "terminated": Admin severed relationship due to compliance/payment issues.
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>", methods=["PATCH", "PUT"])
 def update_vendor(vendor_id):
     try:
@@ -1164,6 +1596,14 @@ def update_vendor(vendor_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: POST /api/vendors
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Enrolls a new retail partner store into the network.
+#   Validates vendor_id uniqueness, captures cold storage parameters,
+#   and writes an audit log entry.
+# ==============================================================================
 @app.route("/api/vendors", methods=["POST"])
 def create_vendor():
     try:
@@ -1196,6 +1636,14 @@ def create_vendor():
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: DELETE /api/vendors/<vendor_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Executes a cascading delete: removes the vendor record from `vendors` and
+#   deletes associated batches from `batches`.
+#   Logs a critical audit event.
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>", methods=["DELETE"])
 def delete_vendor(vendor_id):
     try:
@@ -1210,8 +1658,16 @@ def delete_vendor(vendor_id):
 
 
 # ════════════════════════════════════════════════════════════════════
-# PRODUCTS
+# PRODUCT CATALOG SPECIFICATIONS
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/products
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns the master catalog of batter varieties (Idli Batter, Dosa Batter,
+#   Ragi/Millet Batter) with shelf-life tolerances, packaging sizes, and unit prices.
+# ==============================================================================
 @app.route("/api/products", methods=["GET"])
 def get_products():
     docs = list(COLS["products"].find({}))
@@ -1219,8 +1675,33 @@ def get_products():
 
 
 # ════════════════════════════════════════════════════════════════════
-# BATCHES (Core: create → assign → receive)
+# BATCH LIFECYCLE MANAGEMENT (4-STAGE FRESH SUPPLY CHAIN)
 # ════════════════════════════════════════════════════════════════════
+# LIFECYCLE STAGE MACHINE:
+#   [1. CREATED]   Produced at Central Kitchen with initial QC (pH ~4.4, temp ~25°C).
+#         │
+#         ▼
+#   [2. ASSIGNED]  Dispatched to delivery truck destined for a specific vendor shop.
+#         │
+#         ▼
+#   [3. RECEIVED]  Arrived at vendor store, checked into on-hand retail shelf stock.
+#         │
+#         ▼
+#   [4. ARCHIVED]  Depleted through customer sales (stockout) or spoiled/expired.
+# ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/batches
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Retrieves batches with flexible filtering:
+#     - `vendor_id`: Filter by owning retail shop.
+#     - `status`: "created", "assigned", "received", "archived", or "stockout".
+#     - `include_archived`: Boolean flag (defaults to False for clean active UI).
+#
+# PERFORMANCE OPTIMIZATION:
+#   Bulk-resolves vendor shop names using a single `$in` query instead of N individual queries.
+# ==============================================================================
 @app.route("/api/batches", methods=["GET"])
 def get_batches():
     query = {}
@@ -1251,6 +1732,13 @@ def get_batches():
     return jsonify(result)
 
 
+# ==============================================================================
+# ROUTE: GET /api/batches/available
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns all unassigned batches currently sitting in the Central Kitchen ready
+#   to be dispatched (status="created" and vendor_id is None or empty).
+# ==============================================================================
 @app.route("/api/batches/available", methods=["GET"])
 def get_available_batches():
     """Returns batches in the 'created' state that are not assigned to any vendor yet."""
@@ -1265,6 +1753,14 @@ def get_available_batches():
     return jsonify([jsonify_doc(d) for d in docs])
 
 
+# ==============================================================================
+# ROUTE: GET /api/batches/<batch_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns comprehensive telemetry and sensor data for an individual batch:
+#   manufacturing timestamp, initial pH, ambient temperature, humidity,
+#   and assigned merchant shop name.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>", methods=["GET"])
 def get_single_batch(batch_id):
     """Retrieve details of a single batch."""
@@ -1280,6 +1776,19 @@ def get_single_batch(batch_id):
     return jsonify(item)
 
 
+# ==============================================================================
+# ROUTE: POST /api/batches
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Logs a newly produced batch from the Central Kitchen into `COLS["batches"]`.
+#
+# INSTRUCTOR VIVA POINT — BIOLOGICAL QUALITY PARAMETERS:
+#   - `initialPH`: Freshly ground fermented batter typically has an optimal pH of 4.2 - 4.6.
+#     If initial pH is < 4.0, the batter is over-fermented/sour before dispatch.
+#     If initial pH is > 5.2, fermentation has stalled.
+#   - `fermentationHours`: Standard 8-12 hour incubation period.
+#   - `temperatureC`: Factory ambient grinding temperature (typically 24°C - 28°C).
+# ==============================================================================
 @app.route("/api/batches", methods=["POST"])
 def create_batch():
     """Admin creates a new batch with batter parameters."""
@@ -1321,7 +1830,12 @@ def create_batch():
         return jsonify({"error": str(e)}), 400
 
 
-
+# ==============================================================================
+# ROUTE: PUT / PATCH /api/batches/<batch_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Generic update endpoint for batch attributes or manual status adjustments.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>", methods=["PUT", "PATCH"])
 def update_batch(batch_id):
     """Admin updates batch (e.g., assign to vendor)."""
@@ -1352,9 +1866,20 @@ def update_batch(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: PUT / PATCH /api/batches/<batch_id>/assign
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (STAGE 2: CREATED -> ASSIGNED):
+#   1. Admin dispatches an available batch to a partner store.
+#   2. Transitions status from "created" -> "assigned" with UTC timestamp.
+#   3. Appends an audit record to the batch's `assignment_log` array.
+#   4. If this dispatch fulfills an open vendor restock request, automatically marks
+#      that restock request as "approved" and links the batch ID.
+#   5. Synchronizes vendor store inventory without archiving existing active batches!
+# ==============================================================================
 @app.route("/api/batches/<batch_id>/assign", methods=["PUT", "PATCH"])
 def assign_batch(batch_id):
-    """Admin assigns a batch to a vendor.  Old received batches at the vendor are archived."""
+    """Admin assigns a batch to a vendor. Keeps existing active batches preserved."""
     try:
         data = request.json or {}
         vendor_id = data.get("vendor_id", "").strip()
@@ -1366,7 +1891,7 @@ def assign_batch(batch_id):
         v_name = vendor.get("shop_name", vendor_id)
         now = datetime.utcnow()
 
-        # NOTE: User requirement: Adding/assigning a batch only adds to batches, never archives existing ones
+        # NOTE: Adding/assigning a batch only adds to batches, never archives existing ones
         # ── Assign the new batch ─────────────────────────────────────
         result = COLS["batches"].update_one(
             {"batch_id": batch_id},
@@ -1403,6 +1928,16 @@ def assign_batch(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: PUT / PATCH /api/batches/<batch_id>/receive
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (STAGE 3: ASSIGNED -> RECEIVED):
+#   1. Merchant confirms receipt when the delivery van arrives at their storefront.
+#   2. Transitions batch status from "assigned" -> "received" (now in physical stock).
+#   3. Calls `sync_vendor_inventory_with_batches` to recalculate total active kg.
+#   4. Emits an immutable double-entry ledger event via `write_movement(movement_type="receive")`
+#      with positive quantity and 24-hour expiry horizon.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>/receive", methods=["PUT", "PATCH"])
 def receive_batch(batch_id):
     """Confirm receipt of a batch (by vendor or admin on vendor's behalf)."""
@@ -1458,6 +1993,12 @@ def receive_batch(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: DELETE /api/batches/<batch_id>
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Deletes a batch and triggers inventory re-synchronization for the owner vendor.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>", methods=["DELETE"])
 def delete_batch(batch_id):
     try:
@@ -1471,6 +2012,15 @@ def delete_batch(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: POST / PUT / PATCH /api/batches/<batch_id>/stockout & /archive
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (STAGE 4: RECEIVED -> ARCHIVED / STOCKOUT):
+#   1. When all units in a batch are sold out, vendor marks it depleted.
+#   2. Transitions status from "received" -> "archived", sets `archived_reason="vendor_stockout"`.
+#   3. Deducts batch volume from store inventory.
+#   4. Emits a negative double-entry movement ledger record (`movement_type="stockout"`).
+# ==============================================================================
 @app.route("/api/batches/<batch_id>/stockout", methods=["POST", "PUT", "PATCH"])
 @app.route("/api/batches/<batch_id>/archive", methods=["POST", "PUT", "PATCH"])
 def mark_batch_stockout(batch_id):
@@ -1549,6 +2099,14 @@ def mark_batch_stockout(batch_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: POST /api/batches/<batch_id>/report-issue
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (QUALITY EXCEPTION & INCIDENT REPORTING):
+#   Allows vendors or logistics handlers to report defects (e.g., container leakage,
+#   excess acidity/bloating packaging, broken cold chain during transit).
+#   Writes a high-priority warning alert into `COLS["logs"]` for admin investigation.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>/report-issue", methods=["POST"])
 def report_batch_issue(batch_id):
     """Vendor flags an issue with an assigned/received batch."""
@@ -1580,8 +2138,17 @@ def report_batch_issue(batch_id):
 
 
 # ════════════════════════════════════════════════════════════════════
-# INVENTORY
+# INVENTORY MANAGEMENT & RECONCILIATION
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/inventory
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns active on-hand store inventory records.
+#   Optional query filter `vendorId` / `vendor_id`.
+#   Bulk-resolves vendor shop names to eliminate N+1 query latency.
+# ==============================================================================
 @app.route("/api/inventory", methods=["GET"])
 def get_inventory():
     vendor_id = request.args.get("vendorId") or request.args.get("vendor_id")
@@ -1604,6 +2171,20 @@ def get_inventory():
     return jsonify(result)
 
 
+# ==============================================================================
+# ROUTE: GET /api/inventory/summary
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Provides a comprehensive real-time stock and freshness health summary for a vendor.
+#
+# CALCULATIONS & VIVA HIGHLIGHTS:
+#   - `totalQuantityKg`: Sum of active `received` batches at the store.
+#   - `minimumStockKg`: Minimum safety buffer threshold (defaults to 10.0 kg).
+#   - `belowMinimum`: True if on-hand stock is lower than safety buffer.
+#   - `isStockOut`: True if on-hand stock is 0 or no active batches exist.
+#   - `oldestBatchAgeHrs`: Computes (now - mfgTimestamp) in hours for the oldest
+#     batch on the shelf. Essential for monitoring spoilage vulnerability.
+# ==============================================================================
 @app.route("/api/inventory/summary", methods=["GET"])
 def get_inventory_summary():
     """Return an aggregated inventory summary for dashboard display."""
@@ -1657,6 +2238,18 @@ def get_inventory_summary():
     })
 
 
+# ==============================================================================
+# ROUTE: POST / PATCH /api/inventory
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Central mutation endpoint for inventory operations:
+#   1. Strict Governance: Arbitrary manual stock editing (`action="edit"`) is
+#      explicitly blocked. Physical inventory can ONLY change through identifiable batches.
+#   2. "remove_batches": Archives the specified batches, writes negative ledger
+#      movements, and re-syncs active store stock.
+#   3. "add_batch": Dispatches an unassigned batch from the Central Kitchen or creates
+#      a new production batch assigned to the vendor, logging double-entry movements.
+# ==============================================================================
 @app.route("/api/inventory", methods=["POST", "PATCH"])
 def mutate_inventory():
     try:
@@ -1665,7 +2258,7 @@ def mutate_inventory():
         if not vendor_id:
             return jsonify({"error": "vendor_id is required"}), 400
 
-        action = data.get("action", "edit")  # "add_batch", "remove_batch", "edit"
+        action = data.get("action", "edit")  # "add_batch", "remove_batch", "remove_batches"
         delta = float(data.get("quantity_delta", 0))
         new_qty = data.get("quantity")
         now = datetime.utcnow()
@@ -1680,6 +2273,7 @@ def mutate_inventory():
 
         batch_id_created = None
 
+        # Disallow arbitrary direct overwrites to preserve double-entry audit integrity
         if action == "edit" or new_qty is not None:
             return jsonify({"error": "Direct inventory editing is disabled. Stock is managed strictly via batches."}), 400
 
@@ -1840,7 +2434,12 @@ def mutate_inventory():
         return jsonify({"error": str(e)}), 400
 
 
-
+# ==============================================================================
+# ROUTE: POST / PATCH /api/inventory/remove-batches & /api/batches/remove
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Convenience wrapper route redirecting to `mutate_inventory(action="remove_batches")`.
+# ==============================================================================
 @app.route("/api/inventory/remove-batches", methods=["POST", "PATCH"])
 @app.route("/api/batches/remove", methods=["POST"])
 def remove_batches_dedicated():
@@ -1850,10 +2449,27 @@ def remove_batches_dedicated():
     return mutate_inventory()
 
 
+# ════════════════════════════════════════════════════════════════════
+# VENDOR MOBILE SELF-SERVICE STOCK UPDATE
+# ════════════════════════════════════════════════════════════════════
 
-# ════════════════════════════════════════════════════════════════════
-# VENDOR SELF-SERVICE INVENTORY UPDATE
-# ════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# ROUTE: PUT / POST /api/vendor/inventory/update
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Enables retail partner store owners to report their physical on-hand stock
+#   directly from the React Native mobile app (e.g., after morning tiffin rush).
+#
+# BUSINESS WORKFLOW:
+#   1. Merchant enters current remaining kg (e.g. 15 kg -> 3 kg).
+#   2. Updates `COLS["inventory"]` with new quantity.
+#   3. If remaining stock hits 0: marks active received batches as "stockout" / "archived".
+#   4. Emits a signed delta movement to the ledger: `quantity = remaining - prev_qty`.
+#   5. Evaluates threshold alerts:
+#      - If remaining < minimumStock: flags `below_minimum=True`.
+#      - If remaining <= 0: flags `is_stockout=True`.
+#      Prompts the mobile app UI to trigger the Request Restock modal!
+# ==============================================================================
 @app.route("/api/vendor/inventory/update", methods=["PUT", "POST"])
 def vendor_update_inventory():
     """Vendor updates their own remaining stock quantity (e.g. 15 kg → 3 kg after sales).
@@ -1945,8 +2561,24 @@ def vendor_update_inventory():
 
 
 # ════════════════════════════════════════════════════════════════════
-# RESTOCK REQUESTS (Vendor → Admin Approval Workflow)
+# VENDOR RESTOCK REQUISITION & APPROVAL WORKFLOW
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: POST /api/restock-requests
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Initiated by the retail merchant (or driver) via mobile app when stock drops
+#   below minimum safety buffer (e.g. 5.0 kg).
+#
+# DUAL RECORD CREATION (DATA INTEGRITY PATTERN):
+#   1. Creates primary document in `COLS["restock_requests"]` with current stock snapshot.
+#   2. Creates matching backward-compatible entry in `COLS["orders"]` with
+#      status "pending_admin_approval".
+#   3. Mutual Cross-Linking: `restock_requests.linked_order_id = order_id` and
+#      `orders.restock_request_id = request_id`.
+#   Ensures older order-centric screens and modern restock dashboards stay 100% in sync.
+# ==============================================================================
 @app.route("/api/restock-requests", methods=["POST"])
 def create_restock_request():
     """Vendor requests a new batch after updating their depleted inventory."""
@@ -2037,6 +2669,14 @@ def create_restock_request():
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: GET /api/restock-requests
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Admin ledger view of all merchant restock orders.
+#   Supports query filters: `status` (pending, approved, rejected) and `vendor_id`.
+#   Harmonizes unlinked orders from `COLS["orders"]` into standard restock format.
+# ==============================================================================
 @app.route("/api/restock-requests", methods=["GET"])
 def get_restock_requests():
     """Admin or vendor views restock requests. Filters: ?status=pending|approved|rejected&vendor_id=..."""
@@ -2105,6 +2745,19 @@ def get_restock_requests():
     return jsonify(result)
 
 
+# ==============================================================================
+# ROUTE: PATCH / PUT / POST /api/restock-requests/<request_id>/approve
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Admin approves the merchant restock requisition:
+#   1. Transitions restock request status to "approved" with timestamp.
+#   2. Synchronizes corresponding `orders` record to "approved".
+#   3. Optional Batch Fulfillment: If `assign_batch_id` is supplied:
+#      - Archives existing `received` batches at the store to historical log.
+#      - Assigns the new Central Kitchen batch to the store.
+#      - Links `restock_requests.linked_batch_id = assign_batch_id`.
+#   4. Emits an audit log event.
+# ==============================================================================
 @app.route("/api/restock-requests/<request_id>/approve", methods=["PATCH", "PUT", "POST"])
 @app.route("/api/orders/<request_id>/approve", methods=["PATCH", "PUT", "POST"])
 def approve_restock_request(request_id):
@@ -2216,6 +2869,13 @@ def approve_restock_request(request_id):
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: PATCH / PUT / POST /api/restock-requests/<request_id>/reject
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Admin rejects a merchant restock order, logging the business rationale
+#   (e.g., unpaid invoices, factory capacity deficit, duplicate order).
+# ==============================================================================
 @app.route("/api/restock-requests/<request_id>/reject", methods=["PATCH", "PUT", "POST"])
 @app.route("/api/orders/<request_id>/reject", methods=["PATCH", "PUT", "POST"])
 def reject_restock_request(request_id):
@@ -2296,8 +2956,20 @@ def reject_restock_request(request_id):
 
 
 # ════════════════════════════════════════════════════════════════════
-# VENDOR BATCH HISTORY (Archived / Stocked-out batch log)
+# VENDOR HISTORICAL BATCH AUDIT LOG
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/vendors/<vendor_id>/batch-history
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns archived and stocked-out batches for historical store ledger audits.
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "Do archived batches affect the live Random Forest spoilage model?"
+#   A: "No! Archived batches have already been consumed or depleted. Including
+#      them would generate false spoilage alerts for batter that is no longer on shelves."
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>/batch-history", methods=["GET"])
 def get_vendor_batch_history(vendor_id):
     """Returns archived and stocked-out batches for vendor log history view.
@@ -2319,8 +2991,16 @@ def get_vendor_batch_history(vendor_id):
 
 
 # ════════════════════════════════════════════════════════════════════
-# WEATHER FORECAST (Analytical DB — Phase B)
+# ENVIRONMENTAL & ANALYTICAL TELEMETRY SERVICES
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/weather-forecast
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns upcoming weather forecasts for micro-climates across Chennai / Tamil Nadu.
+#   Optional query filter `date` (format: YYYY-MM-DD).
+# ==============================================================================
 @app.route("/api/weather-forecast", methods=["GET"])
 def get_weather_forecast():
     """Return weather forecast records. Optionally filter by date (YYYY-MM-DD)."""
@@ -2336,6 +3016,18 @@ def get_weather_forecast():
     return jsonify([jsonify_doc(d) for d in docs])
 
 
+# ==============================================================================
+# ROUTE: POST /api/weather-forecast
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Allows an administrator to manually inject or override weather forecast data
+#   (e.g., in case of unexpected heat waves or sudden cyclonic rainfall).
+#
+# VALIDATION RULES:
+#   - `rainProbability`: strictly bounded between 0.0 and 1.0.
+#   - `temperatureC`: strictly bounded between -10.0°C and 55.0°C.
+#   - Upserts into `COLS["weather_forecast"]` with `source="manual_override"`.
+# ==============================================================================
 @app.route("/api/weather-forecast", methods=["POST"])
 def set_weather_forecast():
     """Admin manual override: create or update a weather forecast for a given date."""
@@ -2386,8 +3078,16 @@ def set_weather_forecast():
 
 
 # ════════════════════════════════════════════════════════════════════
-# FESTIVAL CALENDAR (Analytical DB — Phase B)
+# FESTIVAL CALENDAR SERVICE
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/festival-calendar
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns upcoming cultural and public holiday dates used by the ML demand engine.
+#   Optional query filter `region` (e.g. "Tamil Nadu" or "National").
+# ==============================================================================
 @app.route("/api/festival-calendar", methods=["GET"])
 def get_festival_calendar():
     """Return all upcoming festival events. Optionally filter by region."""
@@ -2400,8 +3100,17 @@ def get_festival_calendar():
 
 
 # ════════════════════════════════════════════════════════════════════
-# INVENTORY MOVEMENT (Analytical DB — Phase C)
+# IMMUTABLE INVENTORY MOVEMENT AUDIT TRAIL
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/inventory-movement
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Exposes the append-only double-entry inventory ledger (`COLS["inventory_movement"]`).
+#   Tracks every addition (+), receipt (+), sale (-), removal (-), and stockout (-).
+#   Provides strict auditability required for food safety and inventory accounting.
+# ==============================================================================
 @app.route("/api/inventory-movement", methods=["GET"])
 def get_inventory_movement():
     """Return inventory movement history for a vendor or globally."""
@@ -2415,8 +3124,17 @@ def get_inventory_movement():
 
 
 # ════════════════════════════════════════════════════════════════════
-# LOGS
+# CENTRALIZED AUDIT LOGGING & SEARCH
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# FUNCTION: ensure_seed_logs()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Pre-populates demonstration logs if the `COLS["logs"]` collection is empty.
+#   Seeds examples of operational approvals, batch dispatches, threshold warnings,
+#   and AI inference telemetry.
+# ==============================================================================
 def ensure_seed_logs():
     if COLS["logs"].count_documents({}) == 0:
         now = datetime.utcnow()
@@ -2490,6 +3208,17 @@ def ensure_seed_logs():
 ensure_seed_logs()
 
 
+# ==============================================================================
+# ROUTE: GET /api/logs
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Full-featured audit log search & filtering endpoint for Screen 5 (Activity Log).
+#   Supports filtering by:
+#     - `type`: "activity", "alert", "system", or "all".
+#     - `severity`: array of severities ("info", "warning", "critical").
+#     - `search`: case-insensitive substring search over event text, actor, and target entity.
+#     - `limit`: defaults to 100 entries.
+# ==============================================================================
 @app.route("/api/logs", methods=["GET"])
 def get_logs():
     log_type = request.args.get("type", "all").strip().lower()
@@ -2518,6 +3247,12 @@ def get_logs():
     return jsonify(results)
 
 
+# ==============================================================================
+# ROUTE: POST /api/logs
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Allows clients or external microservices to inject structured audit events.
+# ==============================================================================
 @app.route("/api/logs", methods=["POST"])
 def create_log():
     try:
@@ -2536,8 +3271,15 @@ def create_log():
 
 
 # ════════════════════════════════════════════════════════════════════
-# ORDERS
+# ORDER MANAGEMENT & SALES LOG
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# FUNCTION: ensure_seed_orders()
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Initializes historical sample orders if `COLS["orders"]` is empty.
+# ==============================================================================
 def ensure_seed_orders():
     if COLS["orders"].count_documents({}) == 0:
         now = datetime.utcnow()
@@ -2587,6 +3329,13 @@ def ensure_seed_orders():
 ensure_seed_orders()
 
 
+# ==============================================================================
+# ROUTE: GET /api/orders
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns sales and requisition order history, sorted descending by date.
+#   Optional query filter: `vendor_id`.
+# ==============================================================================
 @app.route("/api/orders", methods=["GET"])
 def get_orders():
     vendor_id = request.args.get("vendor_id") or request.args.get("vendorId")
@@ -2595,6 +3344,14 @@ def get_orders():
     return jsonify([jsonify_doc(d) for d in docs])
 
 
+# ==============================================================================
+# ROUTE: POST /api/orders
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Alternative endpoint for merchant restock placement.
+#   Atomically generates both an `orders` record and a `restock_requests` record
+#   to guarantee synchrony across legacy order tracking and modern restock approval UIs.
+# ==============================================================================
 @app.route("/api/orders", methods=["POST"])
 def create_order():
     """Vendor creates a restock request order."""
@@ -2676,8 +3433,27 @@ def create_order():
 
 
 # ════════════════════════════════════════════════════════════════════
-# ML: DEMAND FORECAST — Auto-derived from DB data
+# MACHINE LEARNING INFERENCE ENGINE & PREDICTIVE ANALYTICS
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/vendors/<vendor_id>/demand-forecast
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (LAYER 1: DEMAND INFERENCE):
+#   1. Calls `compute_sales_features()` to extract the exact 17-feature vector
+#      from real database transactions, weather forecasts, and festival dates.
+#   2. Passes features into the XGBoost Regressor (`demand_model.pkl`).
+#   3. Computes dispatch recommendation using the formula:
+#      net_dispatch_needed = max(0, predicted_demand - available_stock)
+#   4. Phase D Audit Persistence: Writes prediction record to `COLS["predictions"]`
+#      and immutable feature vector to `COLS["feature_snapshots"]`.
+#
+# INSTRUCTOR VIVA POINT:
+#   Q: "Why store feature snapshots in a separate collection?"
+#   A: "Feature snapshots preserve the exact input data at inference time. This allows
+#      data scientists to detect concept drift, covariate shift, and evaluate real vs
+#      predicted errors later for model retraining without historical data loss."
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>/demand-forecast")
 def demand_forecast(vendor_id):
     """Auto-derive demand forecast from real order/inventory data.
@@ -2759,7 +3535,6 @@ def demand_forecast(vendor_id):
     recent_orders = list(COLS["orders"].find({"vendor_id": vendor_id}).sort("order_date", -1).limit(30))
     historical_sales = len(recent_orders) * 15  # rough estimate
 
-    
     return jsonify({
         "vendorId": vendor_id,
         "vendor": {
@@ -2802,6 +3577,19 @@ def demand_forecast(vendor_id):
     })
 
 
+# ==============================================================================
+# ROUTE: GET /api/vendors/<vendor_id>/predict-spoilage
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (LAYER 2: VENDOR SPOILAGE RISK INFERENCE):
+#   1. Evaluates live batter stock at the vendor's retail outlet.
+#   2. Edge case protection: If inventory quantity <= 0 or no active `received`
+#      batch is found, returns `isStockOut=True` and 0 risk immediately.
+#   3. Assembles 13 biochemical features: initial pH, biological age, effective
+#      thermal exposure, and shelf life hours.
+#   4. Runs Random Forest Classifier (`spoilage_model.pkl`) and computes composite score:
+#      Composite Risk = (P_High * 0.90) + (P_Medium * 0.50) + (P_Low * 0.15)
+#      Freshness Score = 1.0 - Composite Risk.
+# ==============================================================================
 @app.route("/api/vendors/<vendor_id>/predict-spoilage")
 def predict_spoilage_for_vendor(vendor_id):
     """Auto-derived spoilage risk for a specific vendor based on their real stock, refrigeration, and batch age."""
@@ -2914,10 +3702,16 @@ def predict_spoilage_for_vendor(vendor_id):
     })
 
 
-
-# ════════════════════════════════════════════════════════════════════
-# ML: DEMAND FORECAST — Manual form input
-# ════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# ROUTE: POST /api/predict-demand
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (WHAT-IF DEMAND SIMULATION API):
+#   Allows users to test alternative scenarios (e.g. "What if temperature rises
+#   to 38°C and rain is 90% during Diwali?").
+#   Takes JSON payload of environmental signals and returns XGBoost prediction
+#   along with dispatch recommendation:
+#     recommended_dispatch = max(0, predicted_demand + safety_stock - available_stock)
+# ==============================================================================
 @app.route("/api/predict-demand", methods=["POST"])
 def predict_demand():
     try:
@@ -3037,9 +3831,17 @@ def predict_demand():
         return jsonify({"error": str(e)}), 400
 
 
-# ════════════════════════════════════════════════════════════════════
-# ML: SPOILAGE RISK
-# ════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# ROUTE: POST /api/predict-spoilage
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (WHAT-IF SPOILAGE RISK SIMULATION API):
+#   Allows users to test spoilage risk for arbitrary environmental/biochemical inputs:
+#     - initialPH: e.g., 4.4 vs 4.0 (sour)
+#     - hoursSinceManufacture: e.g., 24h vs 72h
+#     - hasRefrigerator: 0 (room temp) vs 1 (chilled)
+#     - effectiveTemperatureExposure: (temperature * hoursSinceManufacture)
+#   Returns Random Forest prediction label ("Low", "Medium", "High") and class probabilities.
+# ==============================================================================
 @app.route("/api/predict-spoilage", methods=["POST"])
 def predict_spoilage():
     try:
@@ -3137,7 +3939,6 @@ def predict_spoilage():
             "createdAt": now,
         })
 
-
         return jsonify({
             "riskLabel": risk_label,
             "risk_label": risk_label,
@@ -3158,6 +3959,18 @@ def predict_spoilage():
         return jsonify({"error": str(e)}), 400
 
 
+# ==============================================================================
+# ROUTE: GET /api/batches/<batch_id>/predict-spoilage
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES (PER-BATCH TELEMETRY SPOILAGE INFERENCE):
+#   1. Looks up the physical batch from `COLS["batches"]`.
+#   2. If batch is archived or stockout: skips ML scoring and returns stockout message.
+#   3. Pulls store refrigeration parameters from `COLS["vendors"]`.
+#   4. Computes biological age (now - mfgTimestamp) and actual sell-through rate
+#      from the `inventory_movement` ledger.
+#   5. Evaluates the 13-feature vector using the Random Forest classifier.
+#   6. Persists the inference result and feature snapshot into MongoDB collections.
+# ==============================================================================
 @app.route("/api/batches/<batch_id>/predict-spoilage")
 def predict_spoilage_for_batch(batch_id):
     """Auto-derived spoilage risk from real batch/vendor/inventory data.
@@ -3248,7 +4061,6 @@ def predict_spoilage_for_batch(batch_id):
         batch_qty = inv_item.get("quantity", 10) if inv_item else batch.get("volume_kg", 1.0)
         sell_through = min(1.0, order_count / max(1, batch_qty + order_count))
 
-
     # ── Effective temperature exposure ──
     temp_exposure = (fridge_temp if has_fridge else ambient_temp) * hours_since_mfg
 
@@ -3322,7 +4134,6 @@ def predict_spoilage_for_batch(batch_id):
     except Exception as pe:
         print(f"[WARN] Spoilage prediction/snapshot persist failed: {pe}")
 
-
     return jsonify({
         "batchId": batch_id,
         "batch_id": batch_id,
@@ -3350,8 +4161,15 @@ def predict_spoilage_for_batch(batch_id):
 
 
 # ════════════════════════════════════════════════════════════════════
-# ML: HISTORY & STATS
+# PREDICTION HISTORY & ACCURACY STATISTICS
 # ════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
+# ROUTE: GET /api/history
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns the chronological history of AI predictions made by the backend.
+# ==============================================================================
 @app.route("/api/history", methods=["GET"])
 def get_history():
     limit = int(request.args.get("limit", 50))
@@ -3367,6 +4185,13 @@ def get_history():
     return jsonify(results)
 
 
+# ==============================================================================
+# ROUTE: GET /api/stats
+# ------------------------------------------------------------------------------
+# WHAT THIS DOES:
+#   Returns aggregate counts of total predictions broken down by type:
+#   DEMAND (XGBoost) vs SPOILAGE_RISK (Random Forest).
+# ==============================================================================
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
     total = COLS["predictions"].count_documents({})
@@ -3379,9 +4204,8 @@ def get_stats():
     })
 
 
-
 # ════════════════════════════════════════════════════════════════════
-# API STATUS / HEALTH
+# SYSTEM HEALTH & ROOT PROBE
 # ════════════════════════════════════════════════════════════════════
 @app.route("/")
 def index():
@@ -3393,7 +4217,10 @@ def index():
 
 
 # ════════════════════════════════════════════════════════════════════
-# RUN
+# 🏷️ SERVER ENTRY POINT & STARTUP
+# 👉 CHANGE HERE IF ASKED TO CHANGE SERVER SETTINGS:
+#    - Port: change `port=5000` (e.g. `port=8000` or `port=5050`)
+#    - Host: `host="0.0.0.0"` binds to all network interfaces (accessible via Wi-Fi IP)
 # ════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"

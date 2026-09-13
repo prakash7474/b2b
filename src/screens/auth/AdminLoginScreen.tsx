@@ -1,3 +1,22 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN LOGIN SCREEN (src/screens/auth/AdminLoginScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    Provides the sign-in form for the Central Kitchen Administrator.
+//    - Prompts for Admin Username & Password.
+//    - Pre-filled with demo credentials: `admin` / `admin123`.
+//    - On submission, calls `authStore.loginAdmin(username, password)`.
+//    - If successful, backend returns a JWT bearer token, and `RoleRouter`
+//      automatically transitions the user into the 5-tab Admin Console.
+//    - If credentials fail, displays a clean error notification box.
+//
+// 👉 HOW TO CHANGE DEFAULT LOGIN CREDENTIALS IN THE FORM:
+//    - Look at lines ~35-36:
+//      `const [username, setUsername] = useState('admin');`
+//      `const [password, setPassword] = useState('admin123');`
+//    - Change strings inside `useState('...')` to whatever default you want.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View,
@@ -19,11 +38,15 @@ import { colors, radius, shadows, spacing } from '../../theme';
 
 export const AdminLoginScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
+
+  // ── Pull auth methods & states from Zustand Store ──────────────────────────
   const { loginAdmin, isLoading, error, clearError } = useAuthStore();
 
+  // ── Form Input State (Pre-filled with default demo credentials) ───────────
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
 
+  // ── Form Submit Handler ───────────────────────────────────────────────────
   const handleLogin = async () => {
     if (!username.trim() || !password.trim()) return;
     await loginAdmin(username.trim(), password);
@@ -40,6 +63,7 @@ export const AdminLoginScreen: React.FC = () => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          {/* ── Screen Header ──────────────────────────────────────────────── */}
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -59,13 +83,16 @@ export const AdminLoginScreen: React.FC = () => {
             </Text>
           </View>
 
+          {/* ── Login Form Card ────────────────────────────────────────────── */}
           <View style={styles.card}>
+            {/* Error Banner if login fails */}
             {error ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{error}</Text>
               </View>
             ) : null}
 
+            {/* Username Input Field */}
             <View style={styles.formGroup}>
               <Text style={styles.label}>Admin Username</Text>
               <TextInput
@@ -82,6 +109,7 @@ export const AdminLoginScreen: React.FC = () => {
               />
             </View>
 
+            {/* Password Input Field */}
             <View style={styles.formGroup}>
               <Text style={styles.label}>Password</Text>
               <TextInput
@@ -98,6 +126,7 @@ export const AdminLoginScreen: React.FC = () => {
               />
             </View>
 
+            {/* Sign In Button */}
             <TouchableOpacity
               style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
               onPress={handleLogin}
@@ -111,11 +140,13 @@ export const AdminLoginScreen: React.FC = () => {
               )}
             </TouchableOpacity>
 
+            {/* Demo Credentials Reminder Box */}
             <View style={styles.hintBox}>
               <Text style={styles.hintLabel}>Default Demo Access</Text>
               <Text style={styles.hintCode}>admin / admin123</Text>
             </View>
 
+            {/* Switch to Vendor Portal Link */}
             <TouchableOpacity
               onPress={() => navigation.navigate('VendorLogin')}
               style={styles.switchButton}
@@ -132,6 +163,7 @@ export const AdminLoginScreen: React.FC = () => {
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -286,3 +318,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

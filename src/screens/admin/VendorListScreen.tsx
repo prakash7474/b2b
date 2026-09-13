@@ -1,3 +1,23 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN VENDOR DIRECTORY SCREEN (src/screens/admin/VendorListScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This screen displays the complete directory of partner restaurants & tea stalls
+//    (e.g., Saravana Bhavan, Murugan Idli Shop, A2B, Sangeetha).
+//
+//    Key Capabilities:
+//    1. Directory Listing: Shows shop name, contact number, delivery address, star rating,
+//       and active batch delivery counts.
+//    2. On-Demand AI Demand Forecasting:
+//       - Tapping "Predict Demand" calls the XGBoost ML model (`predictionService.getVendorDemandForecast`).
+//       - Displays predicted daily kg need directly in the shop card.
+//    3. Sorting Controls:
+//       - Sort by "Highest Predicted Demand" (prioritizes high-volume outlets for morning dispatch).
+//       - Sort by "Shop Name" (alphabetical).
+//       - Sort by "Batch Count" (most active).
+//    4. Partner Management: Detailed modal inspection & partner termination / de-registration.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -31,6 +51,7 @@ export const VendorListScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
+  // Zustand store for fetching and caching partner shops
   const { vendors, fetchVendors, isLoading } = useVendorStore();
   const [refreshing, setRefreshing] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('demand');
@@ -46,6 +67,7 @@ export const VendorListScreen: React.FC = () => {
   useEffect(() => {
     fetchVendors();
   }, []);
+
 
   const onRefresh = async () => {
     setRefreshing(true);

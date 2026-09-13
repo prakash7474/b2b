@@ -1,3 +1,21 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN TAB NAVIGATOR (src/navigation/AdminTabNavigator.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    Creates the main navigation menu bar for the Admin portal.
+//    Contains the 5 main administrative tabs:
+//
+//    1. "Dashboard": Overview of daily produced batter, fleet stats, restock orders.
+//    2. "Vendors"  : Directory of all partner idli/dosa shops (status, phone, address).
+//    3. "Batches"  : Central kitchen batch registry (manufacture, assign, track batches).
+//    4. "Stock"    : Stock ledger (view outlet inventory, add batches, remove batches checklist, AI predictions).
+//    5. "Logs"     : Audit trail of every single system event, stock movement, and alert.
+//
+// 👉 HOW TO CHANGE TAB NAMES OR ADD A TAB:
+//    - Look at the `navItems` array below (around line 45).
+//    - To change a tab's label: edit `label: '...'`.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View,
@@ -12,7 +30,7 @@ import { colors, radius, typography, spacing } from '../theme';
 import { useAuthStore } from '../store/authStore';
 import { ConfirmDialog } from '../components/ledger';
 
-// 5 Core Screens
+// ── Import the 5 Core Admin Screens ─────────────────────────────────────────
 import { AdminDashboardScreen } from '../screens/admin/AdminDashboardScreen';
 import { VendorListScreen } from '../screens/admin/VendorListScreen';
 import { BatchListScreen } from '../screens/admin/BatchListScreen';
@@ -27,18 +45,22 @@ interface CustomTabBarProps {
   navigation: any;
 }
 
+// ── Custom Ledger-Themed Tab Bar ────────────────────────────────────────────
+// Styled with traditional ink borders and terracotta accents
 const LedgerTabBar: React.FC<CustomTabBarProps> = ({ state, descriptors, navigation }) => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const { logout } = useAuthStore();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // ── List of Navigation Tabs ───────────────────────────────────────────────
+  // 👉 CHANGE HERE IF ASKED TO RENAME TABS:
   const navItems = [
     { name: 'Dashboard', label: 'Dashboard' },
-    { name: 'Vendors', label: 'Vendors' },
-    { name: 'Batches', label: 'Batches' },
-    { name: 'Stock', label: 'Stock' },
-    { name: 'Logs', label: 'Logs' },
+    { name: 'Vendors',   label: 'Vendors' },
+    { name: 'Batches',   label: 'Batches' },
+    { name: 'Stock',     label: 'Stock' },
+    { name: 'Logs',      label: 'Logs' },
   ];
 
   return (
