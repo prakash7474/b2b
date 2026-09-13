@@ -1,3 +1,22 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR REPORT INCIDENT MODAL (src/screens/vendor/ReportIssueModal.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    Allows a vendor to flag a quality issue or physical transit damage on a delivered batch.
+//    Instead of accepting contaminated or leaked batter into the food chain, the vendor logs an incident.
+//
+//    Incident Categories:
+//    - "Damaged Container": Cracked tub, broken lid, punctured cold seal.
+//    - "Wrong Product": Delivered Dosa batter instead of Idli batter.
+//    - "Quantity Mismatch": E.g., received 15 kg instead of ordered 20 kg.
+//    - "Off Odor / Leaking": Batter fermented prematurely, smells sour/rancid.
+//    - "Other": Custom notes.
+//
+//    Backend Communication:
+//    - Calls `batchService.reportIssue(batch_id, selectedIssue, description)`.
+//    - Saves an incident record in MongoDB and flags the batch in Admin audit logs.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View,
@@ -14,19 +33,21 @@ import { Batch } from '../../types/batch';
 import { batchService } from '../../services/batchService';
 import { colors, typography } from '../../theme';
 
+// ── Props passed from VendorBatchListScreen ─────────────────────────────────
 interface ReportIssueModalProps {
-  visible: boolean;
-  batch: Batch | null;
-  onClose: () => void;
-  onSuccess: () => void;
+  visible: boolean;        // Whether modal is visible
+  batch: Batch | null;     // Batch being flagged
+  onClose: () => void;     // Close button handler
+  onSuccess: () => void;   // Callback after successfully reporting
 }
 
+// ── Incident Category Options ───────────────────────────────────────────────
 const ISSUE_OPTIONS = [
-  { id: 'damaged', label: 'Damaged Container' },
-  { id: 'wrong_product', label: 'Wrong Product' },
+  { id: 'damaged',           label: 'Damaged Container' },
+  { id: 'wrong_product',     label: 'Wrong Product' },
   { id: 'quantity_mismatch', label: 'Quantity Mismatch' },
-  { id: 'bad_smell', label: 'Off Odor / Leaking' },
-  { id: 'other', label: 'Other' },
+  { id: 'bad_smell',         label: 'Off Odor / Leaking' },
+  { id: 'other',             label: 'Other' },
 ];
 
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
@@ -35,12 +56,14 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  // Category selection and user explanation state
   const [selectedIssue, setSelectedIssue] = useState('damaged');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
 
   if (!visible || !batch) return null;
 
+  // ── Submit Incident Report ────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!description.trim()) {
       Alert.alert('Details Required', 'Please provide a brief description of the issue.');
@@ -74,7 +97,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
+          {/* ── Modal Header ──────────────────────────────────────────────── */}
           <View style={styles.header}>
             <View>
               <Text style={styles.headerTitle}>Report Batch Incident</Text>
@@ -87,7 +110,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* ── Modal Body ────────────────────────────────────────────────── */}
           <View style={styles.body}>
+            {/* Category Chips */}
             <Text style={styles.sectionLabel}>Select Incident Category</Text>
             <View style={styles.chipRow}>
               {ISSUE_OPTIONS.map((opt) => {
@@ -106,6 +131,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               })}
             </View>
 
+            {/* Description Text Input */}
             <Text style={styles.sectionLabel}>Incident Observations & Notes</Text>
             <TextInput
               style={styles.textArea}
@@ -118,11 +144,13 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               textAlignVertical="top"
             />
 
+            {/* ── Action Buttons ───────────────────────────────────────────── */}
             <View style={styles.btnRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
 
+              {/* Red Destructive Submit Button */}
               <TouchableOpacity
                 style={[styles.submitBtn, loading && styles.disabledBtn]}
                 onPress={handleSubmit}
@@ -142,6 +170,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -277,3 +306,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+

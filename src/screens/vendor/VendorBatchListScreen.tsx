@@ -1,3 +1,20 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR BATCH LEDGER SCREEN (VendorBatchListScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Outlet Batch Tracking: Shows all batter batches associated with this vendor.
+//   2. Filter Categories:
+//      - "All"              : All current batches.
+//      - "Awaiting Receipt" : Dispatched from kitchen (status "assigned"), vendor must click "Confirm Receipt".
+//      - "In Store"         : Actively stocked & selling (status "received").
+//      - "Stocked Out"      : Finished / sold out.
+//      - "Archived"         : Replaced / older batches.
+//   3. Actions Available:
+//      - "Confirm Receipt"  : Sets status to "received" and updates store inventory.
+//      - "Check Spoilage"   : Runs ML model on this specific batch's pH and shelf time.
+//      - "Mark Stocked Out" : When batter container is empty.
+//      - "Report Issue"     : Reports physical defect, sourness, or leakage.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -27,6 +44,7 @@ export const VendorBatchListScreen: React.FC = () => {
   const { batches, fetchBatches, stockoutBatch, isLoading } = useBatchStore();
   const { fetchBatchSpoilage, batchSpoilage } = usePredictionStore();
 
+  // ── Filter State ─────────────────────────────────────────────────────────
   const [filter, setFilter] = useState<'all' | 'assigned' | 'received' | 'stockout' | 'archived'>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [receiveBatchTarget, setReceiveBatchTarget] = useState<Batch | null>(null);

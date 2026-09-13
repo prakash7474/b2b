@@ -1,3 +1,22 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR RECEIVE BATCH MODAL (src/screens/vendor/ReceiveBatchModal.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This modal handles the digital handoff when the delivery van arrives at a shop.
+//    The vendor inspects the batch quality metrics, verifies container seal, and confirms receipt.
+//
+//    Inspection Metrics Displayed:
+//    - Initial pH (acidity level at milling time, ideally 4.2 - 4.6).
+//    - Delivery Temperature (°C during cold transit).
+//    - Central Kitchen origin / manufacturer.
+//
+//    What happens when "Confirm Receipt" is pressed:
+//    1. Calls `batchStore.receiveBatch(batch.batch_id, notes)`.
+//    2. Backend updates batch status: `'assigned'` ➔ `'received'`.
+//    3. Records delivery timestamp in the database.
+//    4. Automatically adds the batch volume (e.g. +20kg) to the vendor's active stock ledger!
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View,
@@ -14,11 +33,12 @@ import { Batch } from '../../types/batch';
 import { useBatchStore } from '../../store/batchStore';
 import { colors, typography } from '../../theme';
 
+// ── Props passed from VendorBatchListScreen ─────────────────────────────────
 interface ReceiveBatchModalProps {
-  visible: boolean;
-  batch: Batch;
-  onClose: () => void;
-  onSuccess: () => void;
+  visible: boolean;        // Whether modal is visible
+  batch: Batch;            // The batch being received
+  onClose: () => void;     // Close button handler
+  onSuccess: () => void;   // Success callback to refresh vendor batch list & home
 }
 
 export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
@@ -27,10 +47,12 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  // Pull receiveBatch action from Zustand batch store
   const { receiveBatch } = useBatchStore();
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // ── Handle Confirm Receipt ────────────────────────────────────────────────
   const handleConfirm = async () => {
     setLoading(true);
     const ok = await receiveBatch(batch.batch_id, notes.trim());
@@ -51,6 +73,7 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay}>
         <View style={styles.card}>
+          {/* ── Modal Header ──────────────────────────────────────────────── */}
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Confirm Batch Delivery</Text>
@@ -63,6 +86,7 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* ── Batch Quality Verification Summary ────────────────────────── */}
           <View style={styles.body}>
             <View style={styles.infoBox}>
               <View style={styles.infoRow}>
@@ -79,6 +103,7 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
               </View>
             </View>
 
+            {/* Optional Handoff Notes */}
             <View style={styles.formGroup}>
               <Text style={styles.label}>Delivery Handoff Notes (Optional)</Text>
               <TextInput
@@ -93,11 +118,13 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
               />
             </View>
 
+            {/* ── Action Buttons ───────────────────────────────────────────── */}
             <View style={styles.btnRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
 
+              {/* Confirm Receipt Action Button */}
               <TouchableOpacity
                 style={[styles.confirmBtn, loading && styles.disabledBtn]}
                 onPress={handleConfirm}
@@ -117,6 +144,7 @@ export const ReceiveBatchModal: React.FC<ReceiveBatchModalProps> = ({
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -249,3 +277,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+

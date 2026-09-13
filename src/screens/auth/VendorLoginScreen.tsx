@@ -1,3 +1,21 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR LOGIN SCREEN (src/screens/auth/VendorLoginScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    Provides the sign-in form for Partner Restaurant Outlets & Vendors.
+//    - Vendors log in using their unique Vendor Identification Code (e.g., 'V100').
+//    - Pre-filled with demo vendor: `V100` (Lakshmi Idli Kadai).
+//    - On submit, calls `authStore.loginVendor(vendorId)`.
+//    - The backend checks MongoDB collection `vendors` for this ID.
+//    - If found, returns a vendor session token, and `RoleRouter` switches
+//      the display to `VendorTabNavigator` (Home, Batches, Forecast).
+//    - If not found, shows an error message: "Vendor not found".
+//
+// 👉 HOW TO CHANGE DEFAULT VENDOR ID:
+//    - Look at line ~33: `const [vendorId, setVendorId] = useState('V100');`
+//    - Change `'V100'` to any registered vendor ID, such as `'V101'`, `'V102'`, or `'V104'`.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState } from 'react';
 import {
   View,
@@ -19,10 +37,14 @@ import { colors, radius, spacing, typography } from '../../theme';
 
 export const VendorLoginScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
+
+  // ── Pull auth methods from Zustand Store ──────────────────────────────────
   const { loginVendor, isLoading, error, clearError } = useAuthStore();
 
+  // ── Vendor ID Input State (Pre-filled with demo code V100) ────────────────
   const [vendorId, setVendorId] = useState('V100');
 
+  // ── Form Submit Handler ───────────────────────────────────────────────────
   const handleLogin = async () => {
     if (!vendorId.trim()) return;
     await loginVendor(vendorId.trim());
@@ -40,7 +62,7 @@ export const VendorLoginScreen: React.FC = () => {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.container}>
-            {/* Header */}
+            {/* ── Screen Header ────────────────────────────────────────────── */}
             <View style={styles.header}>
               <TouchableOpacity
                 onPress={() => navigation.goBack()}
@@ -60,14 +82,16 @@ export const VendorLoginScreen: React.FC = () => {
               </Text>
             </View>
 
-            {/* Ledger Login Card */}
+            {/* ── Ledger Login Card ────────────────────────────────────────── */}
             <View style={styles.card}>
+              {/* Error Box if vendor ID is invalid */}
               {error ? (
                 <View style={styles.errorBox}>
                   <Text style={styles.errorText}>{error}</Text>
                 </View>
               ) : null}
 
+              {/* Vendor ID Input Field */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Vendor Identification Code</Text>
                 <TextInput
@@ -84,6 +108,7 @@ export const VendorLoginScreen: React.FC = () => {
                 />
               </View>
 
+              {/* Sign In Button */}
               <TouchableOpacity
                 style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
                 onPress={handleLogin}
@@ -97,13 +122,13 @@ export const VendorLoginScreen: React.FC = () => {
                 )}
               </TouchableOpacity>
 
-              {/* Sample Hint Box */}
+              {/* Sample Hint Box Showing Valid Demo IDs */}
               <View style={styles.hintBox}>
                 <Text style={styles.hintText}>Active Retail Partner IDs:</Text>
                 <Text style={styles.hintCode}>V100 (Lakshmi Idli) • V101 • V102 • V104</Text>
               </View>
 
-              {/* Link to Admin */}
+              {/* Link to Admin Login */}
               <TouchableOpacity
                 onPress={() => navigation.navigate('AdminLogin')}
                 style={styles.switchButton}
@@ -122,6 +147,7 @@ export const VendorLoginScreen: React.FC = () => {
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -286,3 +312,4 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+

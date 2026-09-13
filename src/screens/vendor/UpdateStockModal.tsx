@@ -1,3 +1,21 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR UPDATE STOCK MODAL (src/screens/vendor/UpdateStockModal.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This modal popup allows a shop vendor to manually report how much batter
+//    remains in their shop containers (e.g. at the end of the morning or evening shift).
+//
+//    Workflow & Rules:
+//    1. Shows "Current Recorded Stock" as reference.
+//    2. Prompts vendor to input "Remaining Quantity (kg)".
+//    3. VALIDATION: Remaining cannot be negative, and cannot be GREATER than current stock
+//       (because batter gets consumed, you cannot have more than what was delivered!).
+//    4. When submitted, calls `inventoryService.vendorUpdateStock(vendorId, qty)`.
+//    5. If remaining quantity is below the minimum threshold (e.g. < 10kg) or 0 (stockout),
+//       the callback `onSuccess` automatically prompts the vendor with `RequestRestockModal`
+//       so their kitchen never runs dry!
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -13,13 +31,18 @@ import {
 import { inventoryService } from '../../services/inventoryService';
 import { colors, typography } from '../../theme';
 
+// ── Props passed from VendorHomeScreen ──────────────────────────────────────
 interface UpdateStockModalProps {
-  visible: boolean;
-  vendorId: string;
-  currentStock: number;
-  minimumStock?: number;
-  onClose: () => void;
-  onSuccess: (result: { below_minimum: boolean; is_stockout: boolean; remaining_quantity_kg: number }) => void;
+  visible: boolean;        // Whether this modal is open
+  vendorId: string;        // ID of the vendor shop (e.g. 'V100')
+  currentStock: number;    // Current stock balance in kg
+  minimumStock?: number;   // Buffer threshold (default 10kg)
+  onClose: () => void;     // Close button handler
+  onSuccess: (result: {
+    below_minimum: boolean;
+    is_stockout: boolean;
+    remaining_quantity_kg: number;
+  }) => void;              // Success callback to refresh screen
 }
 
 export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
@@ -30,9 +53,11 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  // Input state for vendor's entered kilogram count
   const [quantityStr, setQuantityStr] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // When modal opens, pre-fill with current stock quantity
   useEffect(() => {
     if (visible) {
       setQuantityStr(String(currentStock));
@@ -41,13 +66,17 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
 
   if (!visible) return null;
 
+  // ── Submit Stock Update ───────────────────────────────────────────────────
   const handleSubmit = async () => {
     const qty = parseFloat(quantityStr);
+
+    // Validate that number is valid and positive
     if (isNaN(qty) || qty < 0) {
       Alert.alert('Invalid Volume', 'Please enter a valid remaining quantity in kilograms.');
       return;
     }
 
+    // Business rule: Remaining stock cannot exceed currently recorded stock
     if (qty > currentStock) {
       Alert.alert('Invalid Quantity', 'Cannot be higher than current stock');
       return;
@@ -57,7 +86,7 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
     try {
       const res = await inventoryService.vendorUpdateStock(vendorId, qty);
       setLoading(false);
-      onSuccess(res);
+      onSuccess(res); // Notify parent screen (VendorHomeScreen)
     } catch (err: any) {
       setLoading(false);
       Alert.alert('Update Failed', err.response?.data?.error || err.message || 'Error updating stock.');
@@ -68,6 +97,7 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay}>
         <View style={styles.container}>
+          {/* ── Modal Header ──────────────────────────────────────────────── */}
           <View style={styles.header}>
             <View>
               <Text style={styles.headerTitle}>Update Current Stock</Text>
@@ -80,7 +110,9 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* ── Modal Form Body ────────────────────────────────────────────── */}
           <View style={styles.body}>
+            {/* Current Recorded Stock Display */}
             <View style={styles.productRow}>
               <Text style={styles.fieldLabel}>Current Recorded Stock:</Text>
               <View style={styles.productChip}>
@@ -88,6 +120,7 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
               </View>
             </View>
 
+            {/* Remaining Quantity Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.fieldLabel}>Remaining Quantity (kg)</Text>
               <View style={styles.qtyInputRow}>
@@ -101,11 +134,15 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
                 />
                 <Text style={styles.unitSuffix}>Kilograms (KG)</Text>
               </View>
+              {/* Validation Warning Hint */}
               <Text style={styles.hintText}>
-                {parseFloat(quantityStr) > currentStock ? "Cannot be higher than current stock" : `Minimum required: ${minimumStock} kg`}
+                {parseFloat(quantityStr) > currentStock
+                  ? "Cannot be higher than current stock"
+                  : `Minimum required: ${minimumStock} kg`}
               </Text>
             </View>
 
+            {/* ── Action Buttons ─────────────────────────────────────────────── */}
             <View style={styles.btnRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -130,10 +167,11 @@ export const UpdateStockModal: React.FC<UpdateStockModalProps> = ({
   );
 };
 
+// ── Ledger-Themed Modal Styles ──────────────────────────────────────────────
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(43, 36, 30, 0.65)',
+    backgroundColor: 'rgba(43, 36, 30, 0.65)', // Warm ink overlay
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
@@ -280,3 +318,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+

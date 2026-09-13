@@ -1,3 +1,21 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR REQUEST RESTOCK MODAL (src/screens/vendor/RequestRestockModal.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    Allows a shop vendor to order fresh idli/dosa batter from the Central Kitchen.
+//
+//    Key Features:
+//    1. AI Recommended Quantity: Automatically pre-fills with the AI forecast
+//       (`suggestedQty`) so the vendor doesn't have to guess how much to order.
+//    2. Central Kitchen Batch Picker: Queries `batchService.getAvailableBatches()`
+//       to see which fresh batches are already manufactured and sitting in the cold room.
+//       Vendor can tap one to link it directly to their requisition!
+//    3. Custom Notes: Lets vendor specify delivery instructions (e.g. "Deliver by 6 AM").
+//    4. Order Logging: Calls `inventoryService.requestRestock(...)`.
+//       This creates a pending requisition in MongoDB which appears live on the
+//       Admin Dashboard for the central kitchen manager to approve and dispatch.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -16,14 +34,15 @@ import { batchService } from '../../services/batchService';
 import { Batch } from '../../types/batch';
 import { colors, typography } from '../../theme';
 
+// ── Props definition ────────────────────────────────────────────────────────
 interface RequestRestockModalProps {
-  visible: boolean;
-  vendorId: string;
-  productName?: string;
-  suggestedQty?: number;
-  currentStock?: number;
-  onClose: () => void;
-  onSuccess: () => void;
+  visible: boolean;        // Whether modal is visible
+  vendorId: string;        // ID of requesting vendor (e.g. 'V100')
+  productName?: string;    // Batter type ('Idli Batter' / 'Dosa Batter')
+  suggestedQty?: number;   // Recommended kg from ML forecast
+  currentStock?: number;   // Current kg left in vendor shop
+  onClose: () => void;     // Close modal callback
+  onSuccess: () => void;   // Success callback to refresh vendor screen
 }
 
 export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
@@ -35,6 +54,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  // Form input states
   const [quantityStr, setQuantityStr] = useState('15');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,6 +62,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [fetchingBatches, setFetchingBatches] = useState(false);
 
+  // When modal is opened, fetch ready unassigned batches from central kitchen
   useEffect(() => {
     if (visible) {
       const defaultQty = suggestedQty > 0 ? suggestedQty : 15;
@@ -58,6 +79,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
 
   if (!visible) return null;
 
+  // ── Handle Restock Submission ─────────────────────────────────────────────
   const handleSubmit = async () => {
     const qty = parseFloat(quantityStr);
     if (isNaN(qty) || qty <= 0) {
@@ -95,7 +117,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
+          {/* ── Header ────────────────────────────────────────────────────── */}
           <View style={styles.header}>
             <View>
               <Text style={styles.headerTitle}>Request Fresh Batter Restock</Text>
@@ -108,8 +130,9 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* ── Form Body ──────────────────────────────────────────────────── */}
           <View style={styles.body}>
-            {/* Product Tag */}
+            {/* Selected Product Badge */}
             <View style={styles.productRow}>
               <Text style={styles.fieldLabel}>Selected Product:</Text>
               <View style={styles.productChip}>
@@ -117,7 +140,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
               </View>
             </View>
 
-            {/* Central Kitchen Created Batches Picker */}
+            {/* Central Kitchen Created Batches Picker (Horizontal Scroll) */}
             <View style={styles.inputGroup}>
               <Text style={styles.fieldLabel}>
                 Ready Batches in Central Kitchen ({availableBatches.length})
@@ -168,7 +191,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
               )}
             </View>
 
-            {/* Quantity Input */}
+            {/* Quantity Input with AI Suggestion */}
             <View style={styles.inputGroup}>
               <Text style={styles.fieldLabel}>Requisition Quantity (kg)</Text>
               <View style={styles.qtyInputRow}>
@@ -189,7 +212,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
               ) : null}
             </View>
 
-            {/* Notes Input */}
+            {/* Special Instructions / Notes */}
             <View style={styles.inputGroup}>
               <Text style={styles.fieldLabel}>Dispatch Instructions (Optional)</Text>
               <TextInput
@@ -204,6 +227,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
               />
             </View>
 
+            {/* Action Buttons */}
             <View style={styles.btnRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={loading}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -228,6 +252,7 @@ export const RequestRestockModal: React.FC<RequestRestockModalProps> = ({
   );
 };
 
+// ── Stylesheet ──────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -447,3 +472,4 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 });
+

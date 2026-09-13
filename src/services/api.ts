@@ -1,3 +1,10 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 API CLIENT SETUP (src/services/api.ts)
+// WHAT THIS DOES:
+//   Configures Axios to talk to the Flask backend server.
+//   Handles auth tokens (Bearer token header) and base URL configuration.
+// ════════════════════════════════════════════════════════════════════════════
+
 import axios from 'axios';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -5,10 +12,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export const AUTH_TOKEN_KEY = 'b2p_auth_token';
 export const AUTH_USER_KEY = 'b2p_auth_user';
 
-// Determine default base URL based on platform
+// ── Base URL Configuration ──────────────────────────────────────────────────
+// 👉 CHANGE HERE IF ASKED TO CHANGE SERVER IP OR PORT:
+//    - Web / iOS: 'http://localhost:5000' (or your PC's Wi-Fi IP, e.g. 'http://192.168.1.5:5000')
+//    - Android emulator: 'http://10.0.2.2:5000' (10.0.2.2 routes to host computer localhost)
 const getDefaultBaseUrl = () => {
   if (Platform.OS === 'android') {
-    // 10.0.2.2 is Android emulator's alias to host loopback interface
     return 'http://10.0.2.2:5000';
   }
   return 'http://localhost:5000';
@@ -16,6 +25,7 @@ const getDefaultBaseUrl = () => {
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || getDefaultBaseUrl();
 
+// Create the configured Axios instance
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,

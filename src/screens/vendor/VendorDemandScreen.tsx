@@ -1,3 +1,20 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 VENDOR DEMAND FORECAST SCREEN (src/screens/vendor/VendorDemandScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This screen gives the vendor AI-driven insights into today's expected batter consumption.
+//    Instead of guessing how much batter they will sell and either running out (stockout)
+//    or throwing away sour batter (food waste), the vendor sees:
+//
+//    Key AI Signals:
+//    1. Forecasted Daily Demand (kg): Produced by the XGBoost ML regression model.
+//    2. Recommended Restock Order (kg): (Forecasted Demand - Current Store Stock).
+//    3. Festive Calendar Integration: Detects upcoming festivals (Pongal, Diwali, Sunday rush)
+//       which boost batter sales by 30% - 75%.
+//    4. Weather & Climate Impact: Pulls temperature & precipitation likelihood.
+//    5. Quick Order Action: One-tap button opens `RequestRestockModal` with the AI suggested kg pre-filled!
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -23,6 +40,7 @@ export const VendorDemandScreen: React.FC = () => {
   const [restockModalVisible, setRestockModalVisible] = useState(false);
   const [festivalNote, setFestivalNote] = useState<string>('');
   const [weatherNote, setWeatherNote] = useState<string>('');
+
 
   const loadData = async () => {
     if (!vendor_id) return;

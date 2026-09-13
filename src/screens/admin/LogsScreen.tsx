@@ -1,3 +1,22 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 SYSTEM AUDIT & LOGS SCREEN (src/screens/admin/LogsScreen.tsx)
+// ════════════════════════════════════════════════════════════════════════════
+// 💡 WHAT THIS FILE DOES (EXPLAIN THIS TO THE INSTRUCTOR):
+//    This is the operational flight-recorder / audit trail of the entire platform.
+//    Every action across both Admin and Vendor portals is timestamped and recorded:
+//
+//    Log Categories:
+//    1. "Batch": Batch creation, status transitions, batch removal.
+//    2. "Dispatch / Restock": Vendor requisitions, delivery dispatches, handoff confirmations.
+//    3. "Quality / Spoilage": High temperature warnings, abnormal pH shifts, spoilage risk triggers.
+//    4. "AI Predictions": Demands forecasted and model evaluation metrics.
+//
+//    Severity Levels:
+//    - `info` (Blue/Charcoal): Normal operations (e.g. batch created, vendor logged in).
+//    - `warning` (Turmeric Amber): Low stock warnings, fermentation progressing fast.
+//    - `critical` (Rust Red): Premature spoilage detected, incident reported by vendor.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -23,6 +42,7 @@ export const LogsScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
+  // Logs state, search query, and filter selections
   const [logs, setLogs] = useState<LogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -33,6 +53,7 @@ export const LogsScreen: React.FC = () => {
     'critical',
   ]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
 
   const fetchLogs = async () => {
     try {

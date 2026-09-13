@@ -1,3 +1,17 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 📌 ADMIN INVENTORY & STOCK LEDGER SCREEN (InventoryListScreen.tsx)
+// WHAT THIS SCREEN DOES:
+//   1. Outlet Selector: Select any registered vendor outlet from the scrollable dropdown.
+//   2. Live Stock View: Shows active assigned/received batches and calculates current stock kg.
+//   3. Stock Actions:
+//      - "+ Add Batches": Creates/assigns a batch with status "assigned" to this outlet.
+//      - "− Remove Batches": Interactive checklist to select and remove assigned batches.
+//   4. AI Panel A (Demand Forecasting):
+//      - Runs XGBoost inference on weather, festival, sales lag to recommend restock dispatch.
+//   5. AI Panel B (Spoilage Risk):
+//      - Runs Random Forest inference on pH, temperature, age to predict spoilage and flag discounts.
+// ════════════════════════════════════════════════════════════════════════════
+
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
@@ -79,14 +93,15 @@ export const InventoryListScreen: React.FC = () => {
   const [isDiscountFlagged, setIsDiscountFlagged] = useState(false);
   const [flaggingDiscount, setFlaggingDiscount] = useState(false);
 
-  // Action Modals State (Add / Remove / Edit)
-  const [activeModal, setActiveModal] = useState<'add' | 'remove' | 'edit' | null>(null);
+  // Action Modals State (Add / Remove Batches)
+  const [activeModal, setActiveModal] = useState<'add' | 'remove' | null>(null);
   const [modalInputQty, setModalInputQty] = useState('');
   const [modalBatchId, setModalBatchId] = useState('');
   const [modalProductName, setModalProductName] = useState('Idli Batter');
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
   const [shopBatches, setShopBatches] = useState<Batch[]>([]);
+  const [selectedBatchIdsToRemove, setSelectedBatchIdsToRemove] = useState<string[]>([]);
 
   // Dropdown expansion state for mobile / custom select
   const [showVendorPickerDropdown, setShowVendorPickerDropdown] = useState(false);
@@ -184,11 +199,23 @@ export const InventoryListScreen: React.FC = () => {
     return activeVendors.find((v) => v.vendor_id === selectedVendorId);
   }, [activeVendors, selectedVendorId]);
 
+  // ── Compute Current Stock (KG) ──────────────────────────────────────────
+  // 📌 What this does: Sums volume_kg from all active batches assigned to this vendor.
+  // 👉 This ensures the stock number strictly matches the active batches without mismatch.
   const currentShopStockKg = useMemo(() => {
+    if (shopBatches.length > 0) {
+      return Math.round(shopBatches.reduce((acc, b) => acc + (b.volume_kg || b.quantity_kg || 0), 0) * 10) / 10;
+    }
     if (inventoryItems.length === 0) return 0;
-    return inventoryItems.reduce((acc, item) => acc + (item.quantity || 0), 0);
-  }, [inventoryItems]);
+    return Math.round(inventoryItems.reduce((acc, item) => acc + (item.quantity || 0), 0) * 10) / 10;
+  }, [shopBatches, inventoryItems]);
 
+  // ── AI Action: Demand Forecasting Inference ─────────────────────────────
+  // 📌 What this does:
+  //    1. Calls backend XGBoost demand forecasting model for this vendor.
+  //    2. Compares predicted demand vs current stock.
+  //    3. If predicted > current stock: recommended dispatch = (predicted - current).
+  //    4. If current > predicted: flags surplus stock.
   const handleAnalyzeDemand = async () => {
     if (!selectedVendorId) return;
     setDemandLoading(true);
@@ -220,6 +247,13 @@ export const InventoryListScreen: React.FC = () => {
     }
   };
 
+  // ── AI Action: Spoilage Risk Evaluation ──────────────────────────────────
+  // 📌 What this does:
+  //    1. Calls backend Random Forest spoilage model for this vendor's batches.
+  //    2. Converts score to percentage.
+  // 👉 CHANGE HERE IF ASKED TO TWEAK SPOILAGE ALERT THRESHOLD:
+  //    - Default alert threshold: pct >= 30 (Medium or High risk)
+  //    - High risk label cutoff: pct > 70
   const handlePredictRisk = async () => {
     if (!selectedVendorId || !selectedVendor) return;
     setRiskLoading(true);
@@ -275,25 +309,57 @@ export const InventoryListScreen: React.FC = () => {
     }
   };
 
-  const openActionModal = (type: 'add' | 'remove' | 'edit') => {
+  // ── Open Add / Remove Modal ─────────────────────────────────────────────
+  // 📌 What this does:
+  //    - 'add': pre-populates with default 10kg, auto-generates random Batch ID (e.g. B12345).
+  //    - 'remove': resets checklist to allow selecting assigned batches.
+  const openActionModal = (type: 'add' | 'remove') => {
     if (!selectedVendorId) return;
     setActiveModal(type);
     setModalError('');
-    if (type === 'edit') {
-      setModalInputQty(String(currentShopStockKg || ''));
+    if (type === 'remove') {
+      setSelectedBatchIdsToRemove([]);
     } else {
       setModalInputQty('10');
-    }
-    if (type === 'add') {
       const randomNum = Math.floor(10000 + Math.random() * 90000);
       setModalBatchId(`B${randomNum}`);
       setModalProductName('Idli Batter');
     }
   };
 
+  // ── Modal Submit Action (Add or Remove Batches) ───────────────────────────
+  // 📌 What this does:
+  //    - 'remove': Calls /api/inventory/remove-batches with selected batch IDs,
+  //      archives them, and recalculates stock.
+  //    - 'add': Calls /api/inventory with action 'add_batch', creating a new
+  //      batch with status "assigned" and synchronizing inventory.
   const handleModalSubmit = async () => {
+    if (activeModal === 'remove') {
+      if (selectedBatchIdsToRemove.length === 0) {
+        setModalError('Please select at least one assigned batch to remove.');
+        return;
+      }
+      setModalSubmitting(true);
+      setModalError('');
+      try {
+        await inventoryService.removeBatches(selectedVendorId, selectedBatchIdsToRemove);
+        setShopBatches((prev) =>
+          prev.filter((b) => !selectedBatchIdsToRemove.includes(b.batch_id || (b as any)._id))
+        );
+        setActiveModal(null);
+        setSelectedBatchIdsToRemove([]);
+        await refreshVendorInventory(selectedVendorId);
+        loadDashboardAnalytics();
+      } catch (err: any) {
+        setModalError(err.response?.data?.error || 'Failed to remove selected batches.');
+      } finally {
+        setModalSubmitting(false);
+      }
+      return;
+    }
+
     const val = parseFloat(modalInputQty);
-    if (isNaN(val) || val < 0) {
+    if (isNaN(val) || val <= 0) {
       setModalError('Please enter a valid positive numeric quantity.');
       return;
     }
@@ -309,18 +375,6 @@ export const InventoryListScreen: React.FC = () => {
           quantity_delta: val,
           batch_id: modalBatchId.trim() || undefined,
           product_name: modalProductName.trim() || 'Idli Batter',
-        });
-      } else if (activeModal === 'remove') {
-        await inventoryService.mutateInventory({
-          vendor_id: selectedVendorId,
-          action: 'remove_batch',
-          quantity_delta: val,
-        });
-      } else if (activeModal === 'edit') {
-        await inventoryService.mutateInventory({
-          vendor_id: selectedVendorId,
-          action: 'edit',
-          quantity: val,
         });
       }
 
@@ -441,22 +495,28 @@ export const InventoryListScreen: React.FC = () => {
 
             {/* Dropdown Menu Modal or Accordion */}
             {showVendorPickerDropdown ? (
-              <View style={styles.dropdownMenu}>
-                {activeVendors.map((v) => {
-                  const isCur = v.vendor_id === selectedVendorId;
-                  return (
-                    <TouchableOpacity
-                      key={v.vendor_id}
-                      style={[styles.dropdownOption, isCur && styles.dropdownOptionActive]}
-                      onPress={() => handleSelectVendor(v.vendor_id)}
-                    >
-                      <Text style={[styles.dropdownOptionText, isCur && styles.dropdownOptionTextActive]}>
-                        {v.shop_name}
-                      </Text>
-                      <Text style={styles.dropdownOptionMono}>{v.vendor_id}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={styles.dropdownMenuContainer}>
+                <ScrollView
+                  style={styles.dropdownMenuScroll}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {activeVendors.map((v) => {
+                    const isCur = v.vendor_id === selectedVendorId;
+                    return (
+                      <TouchableOpacity
+                        key={v.vendor_id}
+                        style={[styles.dropdownOption, isCur && styles.dropdownOptionActive]}
+                        onPress={() => handleSelectVendor(v.vendor_id)}
+                      >
+                        <Text style={[styles.dropdownOptionText, isCur && styles.dropdownOptionTextActive]}>
+                          {v.shop_name}
+                        </Text>
+                        <Text style={styles.dropdownOptionMono}>{v.vendor_id}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
             ) : null}
 
@@ -684,16 +744,6 @@ export const InventoryListScreen: React.FC = () => {
                   - Remove Batches
                 </Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.bottomBtn, !selectedVendorId && styles.bottomBtnDisabled]}
-                onPress={() => openActionModal('edit')}
-                disabled={!selectedVendorId}
-              >
-                <Text style={[styles.bottomBtnText, !selectedVendorId && styles.bottomBtnTextDisabled]}>
-                  Edit Inventory
-                </Text>
-              </TouchableOpacity>
             </View>
 
             {!selectedVendorId ? (
@@ -703,22 +753,18 @@ export const InventoryListScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Action Modals (Add / Remove / Edit Batches) */}
+      {/* Action Modals (Add / Remove Batches) */}
       {activeModal ? (
         <Modal visible={true} transparent animationType="fade" onRequestClose={() => setActiveModal(null)}>
           <TouchableWithoutFeedback onPress={() => setActiveModal(null)}>
             <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback>
-                <View style={[styles.modalCard, { width: isMobile ? '92%' : 460 }]}>
+              <TouchableWithoutFeedback onPress={(e) => { e?.stopPropagation?.(); }}>
+                <View style={[styles.modalCard, { width: isMobile ? '92%' : 480 }]}>
                   <View style={styles.modalHeader}>
                     <View>
                       <Text style={styles.modalHeaderSub}>INVENTORY ADJUSTMENT</Text>
                       <Text style={styles.modalHeaderTitle}>
-                        {activeModal === 'add'
-                          ? 'Add Batches to Outlet'
-                          : activeModal === 'remove'
-                          ? 'Remove Stock from Outlet'
-                          : 'Edit Outlet Inventory'}
+                        {activeModal === 'add' ? 'Add Batches to Outlet' : 'Remove Assigned Batches'}
                       </Text>
                     </View>
                     <TouchableOpacity onPress={() => setActiveModal(null)}>
@@ -736,39 +782,122 @@ export const InventoryListScreen: React.FC = () => {
                     </View>
                   ) : null}
 
-                  {/* Preset Buttons for Add / Remove */}
-                  {activeModal === 'add' || activeModal === 'remove' ? (
-                    <View style={styles.presetButtonsRow}>
-                      {[5, 10, 25].map((preset) => (
-                        <TouchableOpacity
-                          key={preset}
-                          style={styles.presetBtn}
-                          onPress={() => setModalInputQty(String(preset))}
-                        >
-                          <Text style={styles.presetBtnText}>
-                            {activeModal === 'add' ? `+${preset} kg` : `-${preset} kg`}
+                  {activeModal === 'remove' ? (
+                    <View style={styles.batchChecklistSection}>
+                      <View style={styles.batchChecklistHeader}>
+                        <Text style={styles.fieldLabel}>SELECT ASSIGNED BATCHES TO REMOVE *</Text>
+                        {shopBatches.length > 0 ? (
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity
+                              onPress={() =>
+                                setSelectedBatchIdsToRemove(
+                                  shopBatches.map((b) => b.batch_id || (b as any)._id)
+                                )
+                              }
+                            >
+                              <Text style={styles.checklistActionText}>Select All</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.checklistDivider}>•</Text>
+                            <TouchableOpacity onPress={() => setSelectedBatchIdsToRemove([])}>
+                              <Text style={styles.checklistActionText}>Clear</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {shopBatches.length === 0 ? (
+                        <View style={styles.emptyBatchBox}>
+                          <Text style={styles.emptyBatchText}>
+                            No active batches currently assigned to {selectedVendor?.shop_name}.
                           </Text>
-                        </TouchableOpacity>
-                      ))}
+                        </View>
+                      ) : (
+                        <ScrollView style={styles.batchChecklistScroll} nestedScrollEnabled={true}>
+                          {shopBatches.map((batch) => {
+                            const bId = batch.batch_id || (batch as any)._id;
+                            const isSelected = selectedBatchIdsToRemove.includes(bId);
+                            const vol = batch.volume_kg || batch.quantity_kg || 0;
+                            const statusLabel =
+                              batch.status === 'received'
+                                ? 'In Store (Received)'
+                                : batch.status === 'assigned'
+                                ? 'Assigned'
+                                : batch.status || 'Active';
+
+                            return (
+                              <TouchableOpacity
+                                key={bId}
+                                style={[styles.batchChecklistRow, isSelected && styles.batchChecklistRowSelected]}
+                                onPress={() => {
+                                  setSelectedBatchIdsToRemove((prev) =>
+                                    isSelected ? prev.filter((id) => id !== bId) : [...prev, bId]
+                                  );
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <View style={[styles.checkboxSquare, isSelected && styles.checkboxSquareSelected]}>
+                                  <Text style={[styles.checkboxMark, isSelected && styles.checkboxMarkSelected]}>
+                                    {isSelected ? '✓' : ''}
+                                  </Text>
+                                </View>
+                                <View style={styles.batchRowInfo}>
+                                  <View style={styles.batchRowTitleRow}>
+                                    <Text style={styles.batchRowId}>Batch #{batch.batch_id || (batch as any).batch_number}</Text>
+                                    <Text style={styles.batchRowStatus}>[{statusLabel}]</Text>
+                                  </View>
+                                  <Text style={styles.batchRowSub}>
+                                    {batch.product_name || 'Idli Batter'} • {vol} kg
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      )}
+
+                      {selectedBatchIdsToRemove.length > 0 ? (
+                        <View style={styles.selectedSummaryRow}>
+                          <Text style={styles.selectedSummaryText}>
+                            Selected: {selectedBatchIdsToRemove.length} batch(es) (
+                            {Math.round(
+                              shopBatches
+                                .filter((b) => selectedBatchIdsToRemove.includes(b.batch_id || (b as any)._id))
+                                .reduce((sum, b) => sum + (b.volume_kg || b.quantity_kg || 0), 0) * 10
+                            ) / 10}{' '}
+                            kg to remove)
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
                   ) : null}
 
-                  <View style={styles.formGroup}>
-                    <Text style={styles.fieldLabel}>
-                      {activeModal === 'edit' ? 'EXACT QUANTITY (KG) *' : 'QUANTITY DELTA (KG) *'}
-                    </Text>
-                    <TextInput
-                      style={[styles.fieldInput, styles.fieldInputMono]}
-                      value={modalInputQty}
-                      onChangeText={setModalInputQty}
-                      keyboardType="numeric"
-                      placeholder="e.g. 15.0"
-                      placeholderTextColor={colors.textMuted}
-                    />
-                  </View>
-
                   {activeModal === 'add' ? (
                     <>
+                      {/* Preset Buttons for Add */}
+                      <View style={styles.presetButtonsRow}>
+                        {[5, 10, 25].map((preset) => (
+                          <TouchableOpacity
+                            key={preset}
+                            style={styles.presetBtn}
+                            onPress={() => setModalInputQty(String(preset))}
+                          >
+                            <Text style={styles.presetBtnText}>+{preset} kg</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.fieldLabel}>QUANTITY DELTA (KG) *</Text>
+                        <TextInput
+                          style={[styles.fieldInput, styles.fieldInputMono]}
+                          value={modalInputQty}
+                          onChangeText={setModalInputQty}
+                          keyboardType="numeric"
+                          placeholder="e.g. 15.0"
+                          placeholderTextColor={colors.textMuted}
+                        />
+                      </View>
+
                       <View style={styles.formGroup}>
                         <Text style={styles.fieldLabel}>BATCH IDENTIFIER (AUTO-GENERATED) *</Text>
                         <TextInput
@@ -813,19 +942,24 @@ export const InventoryListScreen: React.FC = () => {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={styles.submitBtn}
+                      style={[
+                        styles.submitBtn,
+                        activeModal === 'remove' &&
+                          (selectedBatchIdsToRemove.length === 0 || shopBatches.length === 0) &&
+                          styles.bottomBtnDisabled,
+                      ]}
                       onPress={handleModalSubmit}
-                      disabled={modalSubmitting}
+                      disabled={
+                        modalSubmitting ||
+                        (activeModal === 'remove' &&
+                          (selectedBatchIdsToRemove.length === 0 || shopBatches.length === 0))
+                      }
                     >
                       {modalSubmitting ? (
                         <ActivityIndicator size="small" color={colors.paperWhite} />
                       ) : (
                         <Text style={styles.submitBtnText}>
-                          {activeModal === 'add'
-                            ? '✓ Add Batches'
-                            : activeModal === 'remove'
-                            ? '✓ Remove Batches'
-                            : '✓ Save Inventory'}
+                          {activeModal === 'add' ? '✓ Add Batches' : '✓ Remove Selected Batches'}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -993,13 +1127,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textSecondary,
   },
+  dropdownMenuContainer: {
+    backgroundColor: colors.paperWhite,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
+    borderRadius: radius.sm,
+    marginBottom: spacing.md,
+    maxHeight: 260,
+    overflow: 'hidden',
+  },
+  dropdownMenuScroll: {
+    maxHeight: 260,
+  },
   dropdownMenu: {
     backgroundColor: colors.paperWhite,
     borderWidth: 1.5,
     borderColor: colors.inkCharcoal,
     borderRadius: radius.sm,
     marginBottom: spacing.md,
-    maxHeight: 200,
+    maxHeight: 260,
   },
   dropdownOption: {
     flexDirection: 'row',
@@ -1026,6 +1172,115 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: typography.fontFamily.mono,
     color: colors.textSecondary,
+  },
+  batchChecklistSection: {
+    marginBottom: spacing.md,
+  },
+  batchChecklistHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  checklistActionText: {
+    fontSize: 11,
+    fontFamily: typography.fontFamily.mono,
+    color: colors.clayTerracotta,
+    fontWeight: '700',
+  },
+  checklistDivider: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  emptyBatchBox: {
+    padding: spacing.md,
+    backgroundColor: colors.batterCream,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    alignItems: 'center',
+  },
+  emptyBatchText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: typography.fontFamily.body,
+  },
+  batchChecklistScroll: {
+    maxHeight: 220,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.sm,
+    backgroundColor: colors.paperWhite,
+  },
+  batchChecklistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderHairline,
+  },
+  batchChecklistRowSelected: {
+    backgroundColor: colors.batterCream,
+  },
+  checkboxSquare: {
+    width: 18,
+    height: 18,
+    borderWidth: 1.5,
+    borderColor: colors.inkCharcoal,
+    borderRadius: 3,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.paperWhite,
+  },
+  checkboxSquareSelected: {
+    backgroundColor: colors.clayTerracotta,
+    borderColor: colors.clayTerracotta,
+  },
+  checkboxMark: {
+    fontSize: 11,
+    color: 'transparent',
+    fontWeight: 'bold',
+  },
+  checkboxMarkSelected: {
+    color: colors.paperWhite,
+  },
+  batchRowInfo: {
+    flex: 1,
+  },
+  batchRowTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  batchRowId: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fontFamily.mono,
+    color: colors.inkCharcoal,
+  },
+  batchRowStatus: {
+    fontSize: 10,
+    fontFamily: typography.fontFamily.mono,
+    color: colors.clayTerracotta,
+    fontWeight: '600',
+  },
+  batchRowSub: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontFamily: typography.fontFamily.body,
+  },
+  selectedSummaryRow: {
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  selectedSummaryText: {
+    fontSize: 11,
+    fontFamily: typography.fontFamily.mono,
+    fontWeight: '700',
+    color: colors.clayTerracotta,
   },
   panelsGrid: {
     flexDirection: 'row',
