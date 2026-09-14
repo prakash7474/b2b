@@ -3,14 +3,23 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+addopts = "-ra -q --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]
-source = ["app.py"]
-omit = ["tests/*", ".expo/*", "node_modules/*"]
+source = ["."]
+omit = [
+    "tests/*",
+    ".expo/*",
+    "node_modules/*",
+    ".kilo/*",
+    "retrain_models.py",
+]
 
 [tool.coverage.report]
 show_missing = true
 precision = 1
+fail_under = 0
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

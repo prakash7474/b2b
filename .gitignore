@@ -11,6 +11,7 @@ __pycache__/
 *.pyc
 *.pyo
 
+
 # Expo & React Native
 .expo/
 web-build/
@@ -52,8 +53,8 @@ src/__tests__/
 # Kilo worktrees
 .kilo/
 
-# ML model artifacts (keep .pkl in root for runtime)
-# *.pkl
+# ML model artifacts
+*.pkl
 
 # IDE / Editor
 .vscode/

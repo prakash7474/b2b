@@ -27,8 +27,8 @@ from flask import Flask
 from flask_cors import CORS
 from itsdangerous import URLSafeTimedSerializer
 
-# ── Secret loading (from env / gitignored atlas-credentials.env) ─────
-def _load_env_file(path="atlas-credentials.env"):
+# ── Secret loading (from env files) ──────────────────────────────────
+def _load_env_file(path=".env"):
     """Load a simple KEY=VALUE file into the environment without extra deps."""
     if not os.path.exists(path):
         return

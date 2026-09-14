@@ -1,7 +1,6 @@
 export * from './LedgerPanel';
 export * from './StatRow';
 export * from './LedgerButtons';
-export * from './RiskBadge';
 export * from './ConfirmDialog';
 export * from './VendorPickerModal';
 export * from './FilterBar';

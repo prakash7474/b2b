@@ -8,8 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "python -m pytest tests/ -v --tb=long",
-    "test:coverage": "python -m pytest tests/ -v --tb=long --cov --cov-report=term-missing --cov-report=html:htmlcov --cov-report=xml:coverage.xml --junitxml=test-results/junit.xml",
+    "test:backend": "python -m pytest tests/ -v --tb=long",
+    "test:backend:coverage": "python -m pytest tests/ -v --tb=long --cov --cov-report=term-missing --cov-report=html:htmlcov --cov-report=xml:coverage.xml --junitxml=test-results/junit.xml",
+    "test:frontend": "jest",
+    "test": "npm run test:backend",
     "type-check": "tsc --noEmit"
   },
   "keywords": [],

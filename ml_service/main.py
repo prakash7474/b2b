@@ -3,7 +3,7 @@ FastAPI ML microservice application entrypoint for B2P.
 """
 
 from fastapi import FastAPI
-from app.routers.recommend import router as recommend_router
+from ml_service.routers.recommend import router as recommend_router
 
 app = FastAPI(
     title="B2P ML Recommendation Engine",

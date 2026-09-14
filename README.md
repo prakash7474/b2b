@@ -18,75 +18,104 @@ This platform provides:
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Vanilla HTML/CSS/JavaScript (SPA) |
-| Backend | Python Flask (single app) |
-| Database | MongoDB Atlas (single `b2p` database) |
+| Frontend | React Native (Expo) — Mobile app for Admin & Vendor |
+| Backend | Python Flask (port 5000) |
+| ML Service | Python FastAPI (recommendation engine) |
+| Database | MongoDB Atlas |
 | ML Models | XGBoost (demand), Random Forest (spoilage) |
-| Data Processing | pandas, NumPy, scikit-learn |
+| State Management | Zustand |
+| Navigation | React Navigation |
 
 ## Project Structure
 
 ```
-.
-├── app.py                          # Unified Flask backend (port 5000)
-├── static/
-│   └── index.html                  # Unified SPA frontend (10 pages)
+b2b/
+├── app.py                      # Flask backend entry point
+├── App.tsx                     # React Native root component
+├── index.js                    # Expo component registration
 │
-├── demand_forecast_model.pkl       # XGBoost demand model bundle
-├── spoilage_risk_model.pkl         # Random Forest spoilage model bundle
-├── retrain_models.py               # Script to retrain both models
-├── requirements.txt                # Python dependencies
+├── backend/                    # Flask backend package
+│   ├── config.py               #   App config, CORS, credentials
+│   ├── database.py             #   MongoDB connection, utilities
+│   ├── auth.py                 #   Authentication middleware
+│   ├── routes/                 #   REST API route handlers
+│   │   ├── dashboard.py        #     Dashboard stats, logs
+│   │   ├── vendors.py          #     Vendor CRUD, forecasts
+│   │   ├── batches.py          #     Batch lifecycle
+│   │   ├── inventory.py        #     Inventory management
+│   │   ├── orders.py           #     Order processing
+│   │   └── predictions.py      #     Prediction history/stats
+│   └── services/               #   ML models & utilities
+│       ├── constants.py        #     Product mappings, helpers
+│       ├── demand.py           #     XGBoost demand forecasting
+│       ├── spoilage.py         #     Random Forest spoilage risk
+│       ├── weather.py          #     Weather forecast lookup
+│       └── festivals.py        #     Festival calendar
 │
-├── b2p_demand_forecasting_data.csv  # Demand model training data
-├── b2p_spoilage_risk_data.csv       # Spoilage model training data
+├── ml_service/                 # FastAPI ML recommendation service
+│   ├── main.py                 #   FastAPI app entrypoint
+│   ├── haversine.py            #   Distance calculation
+│   ├── retrain_models.py       #   Model retraining script
+│   └── routers/
+│       └── recommend.py        #     POST /recommend endpoint
 │
-├── DOCUMENTATION.md                # Full project documentation
-├── STOCK_ALLOCATION_README.md      # Stock allocation, lifecycle & spoilage risk logic
-├── demand_forecast_model_documentation.md
-├── spoilage_risk_model_documentation.md
-└── B2P_Database_Schema_Black_White_v2.html
+├── src/                        # React Native application
+│   ├── components/             #   Shared UI components
+│   │   └── ledger/             #     Ledger-themed components
+│   ├── navigation/             #   React Navigation setup
+│   ├── screens/                #   Screen components
+│   │   ├── admin/              #     Admin screens (14)
+│   │   ├── auth/               #     Auth screens (3)
+│   │   └── vendor/             #     Vendor screens (9)
+│   ├── services/               #   API client layer
+│   ├── store/                  #   Zustand state management
+│   ├── theme/                  #   Design system
+│   └── types/                  #   TypeScript definitions
+│
+├── tests/                      # Python test suite
+│   ├── conftest.py             #   Fixtures, FakeMongo
+│   └── test_*.py               #   Test files
+│
+├── static/                     # Expo assets (icons, splash)
+├── haversine.py                # Canonical haversine implementation
+├── requirements.txt            # Python dependencies
+├── package.json                # Node/Expo dependencies
+├── pyproject.toml              # pytest/coverage config
+└── app.json                    # Expo app configuration
 ```
-
-## Pages
-
-| Page | Description |
-|------|-------------|
-| 📊 Dashboard | Aggregated stats: vendors, inventory, orders, alerts, predictions |
-| 🏪 Vendors | List, detail view, verify/reject registration, ML demand forecast |
-| 📦 Orders | Filterable list with search, detail modal with order items |
-| 📋 Inventory | Freshness bars, low stock flags, ML spoilage risk per item |
-| 🔔 Alerts | Low stock, spoilage risk, expiry warnings (filterable) |
-| ⭐ Recommendations | Vendor ranking by distance, stock, freshness, rating |
-| 🤖 AI Predictions | Run ML demand forecast + spoilage risk for all vendors/inventory |
-| 📈 Demand Forecast | Manual 17-field form → ML prediction → stored in DB |
-| ⚠️ Spoilage Risk | Manual 14-field form → ML risk assessment → stored in DB |
-| 📜 Prediction History | All past predictions with stats |
 
 ## Setup
 
 ### Prerequisites
 
 - Python 3.9+
+- Node.js 18+
 - MongoDB Atlas account (or local MongoDB)
 
-### 1. Install Dependencies
+### 1. Install Python Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Verify ML Model Files
+### 2. Install Node Dependencies
 
-Ensure these exist in the project root:
+```bash
+npm install
+```
+
+### 3. Verify ML Model Files
+
+Ensure these exist in `ml_service/`:
 - `demand_forecast_model.pkl`
 - `spoilage_risk_model.pkl`
 
 If missing, generate them:
 ```bash
-python retrain_models.py
+python ml_service/retrain_models.py
 ```
 
-### 3. Environment Variables (Optional)
+### 4. Environment Variables (Optional)
 
 ```bash
 export MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net"
@@ -96,89 +125,99 @@ If not set, the app uses a default hardcoded connection string.
 
 ## Running
 
+### Backend (Flask)
+
 ```bash
 python app.py
 # → http://localhost:5000
 ```
 
-On first run, the app automatically seeds the database with sample data:
-- 9 users, 5 vendors, 4 products
-- 10 inventory items, 8 orders, 11 order items
-- 8 alerts, 7 recommendations
+### Frontend (Expo)
+
+```bash
+npm start
+# → Opens Expo DevTools
+# → Press 'a' for Android, 'i' for iOS, 'w' for web
+```
+
+### ML Recommendation Service (Optional)
+
+```bash
+cd ml_service
+uvicorn main:app --reload --port 8000
+# → http://localhost:8000
+```
+
+## Testing
+
+### Backend Tests
+
+```bash
+npm run test:backend
+# or
+python -m pytest tests/ -v
+```
+
+### Frontend Tests
+
+```bash
+npm run test:frontend
+# or
+npx jest
+```
+
+### With Coverage
+
+```bash
+npm run test:backend:coverage
+```
 
 ## API Reference
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `GET /api/dashboard` | GET | Aggregated stats (all collections) |
-| `GET /api/vendors` | GET | List all vendors |
+| `GET /api/dashboard` | GET | Aggregated stats |
+| `GET /api/vendors` | GET | List vendors |
 | `POST /api/vendors` | POST | Create vendor |
 | `GET /api/vendors/<id>` | GET | Vendor detail |
-| `DELETE /api/vendors/<id>` | DELETE | Delete vendor |
 | `PUT /api/vendors/<id>/verify` | PUT | Verify/reject vendor |
-| `GET /api/vendors/<id>/inventory` | GET | Vendor's inventory |
-| `GET /api/vendors/<id>/orders` | GET | Vendor's delivery orders |
-| `GET /api/vendors/<id>/demand-forecast` | GET | ML demand (auto-derived from DB) |
-| `GET /api/products` | GET | List all products |
-| `POST /api/products` | POST | Create product |
-| `DELETE /api/products/<id>` | DELETE | Delete product |
-| `GET /api/batches` | GET | List all batches |
+| `GET /api/batches` | GET | List batches |
 | `POST /api/batches` | POST | Create batch |
-| `DELETE /api/batches/<id>` | DELETE | Delete batch |
-| `GET /api/inventory` | GET | List all inventory |
+| `GET /api/inventory` | GET | List inventory |
 | `POST /api/inventory` | POST | Create inventory item |
-| `GET /api/inventory/<id>` | GET | Inventory item detail |
-| `DELETE /api/inventory/<id>` | DELETE | Delete inventory item |
-| `GET /api/inventory/<id>/spoilage-risk` | GET | ML spoilage risk (auto-derived from DB) |
-| `GET /api/orders` | GET | List orders (filterable: vendor_id, order_status, payment_status, search) |
-| `GET /api/orders/<id>` | GET | Order with items |
-| `GET /api/alerts` | GET | Alerts (filterable: alert_type, alert_status) |
-| `GET /api/recommendations` | GET | Vendor recommendations |
-| `POST /api/predict-demand` | POST | Manual demand prediction (stored in DB) |
-| `POST /api/predict-spoilage` | POST | Manual spoilage prediction (stored in DB) |
+| `GET /api/inventory/<id>/spoilage-risk` | GET | ML spoilage risk |
+| `GET /api/orders` | GET | List orders |
+| `POST /api/predict-demand` | POST | Demand prediction |
+| `POST /api/predict-spoilage` | POST | Spoilage prediction |
 | `GET /api/history` | GET | Prediction history |
-| `GET /api/stats` | GET | Prediction statistics |
 
 ## Database
 
-Single MongoDB database: **`b2p`**
+MongoDB database: **`b2p`**
 
 | Collection | Description |
 |------------|-------------|
-| `users` | User accounts (admin, vendor, customer) |
-| `vendors` | Vendor profiles with location, rating, verification |
-| `products` | Product catalog (Idli, Dosa, Combo, Rava batter) |
-| `inventory` | Current stock per vendor with freshness scores |
-| `orders` | Customer orders with payment and delivery info |
-| `order_items` | Line items per order |
-| `batches` | Production batches with pH and volume |
-| `inventory_alerts` | Low stock, spoilage risk, expiry warnings |
-| `vendor_recommendations` | Ranked vendor suggestions per customer |
-| `predictions` | ML prediction history (demand + spoilage) |
+| `users` | User accounts (admin, vendor) |
+| `vendors` | Vendor profiles with location |
+| `products` | Product catalog |
+| `inventory` | Current stock per vendor |
+| `orders` | Customer orders |
+| `batches` | Production batches |
+| `predictions` | ML prediction history |
 
 ## Retraining Models
 
 After 8-12 weeks of real data, or when performance degrades:
 
 ```bash
-python retrain_models.py
+python ml_service/retrain_models.py
 ```
 
 This reads CSV training data and regenerates both `.pkl` model files.
 
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| MongoDB Connection Error | Verify `MONGODB_URI`; check firewall allows Atlas access |
-| Model Not Found | Ensure `.pkl` files are in project root; run `retrain_models.py` |
-| Port Already in Use | Change port in `app.run(..., port=XXXX)` or kill the process |
-| Import Error (xgboost) | Run `pip install xgboost>=2.0` |
-| Empty Dashboard | First run auto-seeds data; check MongoDB connection |
-
 ## Documentation
 
-- [Full Documentation](DOCUMENTATION.md) — Architecture, database schema, ML models, data flow
-- [Demand Model Docs](demand_forecast_model_documentation.md) — Feature engineering, training details
-- [Spoilage Model Docs](spoilage_risk_model_documentation.md) — Risk classification, probabilities
-- [Database Schema](B2P_Database_Schema_Black_White_v2.html) — Visual schema reference
+- [Full Documentation](DOCUMENTATION.md) — Architecture, database schema, ML models
+- [Stock Allocation](STOCK_ALLOCATION_README.md) — Stock allocation lifecycle
+- [Demand Model](demand_forecast_model_documentation.md) — Feature engineering, training
+- [Spoilage Model](spoilage_risk_model_documentation.md) — Risk classification

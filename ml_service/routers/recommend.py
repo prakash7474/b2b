@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 try:
-    from app.haversine import haversine_distance_km
+    from ml_service.haversine import haversine_distance_km
 except ImportError:
     from haversine import haversine_distance_km
 
